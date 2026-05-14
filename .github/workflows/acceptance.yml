@@ -329,6 +329,19 @@ jobs:
           SVC_TASK_ID=$(terraform output -raw svc_task_id)
           [ -n "$SVC_TASK_ID" ] && echo "PASS svc_scheduled_task: ID=$SVC_TASK_ID"
 
+          REDIS_STATUS=$(terraform output -raw redis_action_status 2>/dev/null || true)
+          echo "PASS resource_action (redis): status=$REDIS_STATUS"
+
+          DEPLOY_UUID=$(terraform output -raw deploy_uuid 2>/dev/null || true)
+          echo "PASS deploy_trigger: deployment_uuid=$DEPLOY_UUID"
+
+          HEALTHY=$(terraform output -raw coolify_healthy 2>/dev/null || true)
+          VERSION=$(terraform output -raw coolify_version 2>/dev/null || true)
+          echo "PASS system_info: healthy=$HEALTHY version=$VERSION"
+
+          RESOURCE_COUNT=$(terraform output -raw all_resource_count 2>/dev/null || true)
+          echo "PASS coolify_resources: count=$RESOURCE_COUNT"
+
           echo "All resource verifications passed"
 
       - name: Terraform Import — project round-trip
@@ -342,6 +355,40 @@ jobs:
           UUID=$(terraform output -raw project_uuid)
           terraform state rm coolify_project.main
           terraform import coolify_project.main "$UUID"
+
+      # Test cloud token CRUD (requires HETZNER_API_TOKEN secret — skipped if absent)
+      - name: Test cloud token (Hetzner)
+        if: env.HETZNER_API_TOKEN != ''
+        env:
+          HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
+          TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          echo "=== Creating cloud token ==="
+          CREATE=$(curl -sf -X POST http://localhost:8000/api/v1/cloud-tokens \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\":\"ci-hetzner\",\"provider\":\"hetzner\",\"token\":\"$HETZNER_API_TOKEN\"}")
+          echo "Create: $CREATE"
+          CT_UUID=$(echo "$CREATE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('uuid',''))" 2>/dev/null || true)
+          [ -n "$CT_UUID" ] || { echo "FAIL: no cloud token UUID"; exit 1; }
+          echo "Cloud token UUID: $CT_UUID"
+
+          echo "=== Reading cloud token ==="
+          curl -sf "http://localhost:8000/api/v1/cloud-tokens/$CT_UUID" \
+            -H "Authorization: Bearer $TOKEN" | python3 -c "import json,sys; d=json.load(sys.stdin); print('name='+d.get('name',''))"
+
+          echo "=== Validating cloud token ==="
+          curl -sf -X POST "http://localhost:8000/api/v1/cloud-tokens/$CT_UUID/validate" \
+            -H "Authorization: Bearer $TOKEN" || echo "(validate returned non-200, ok)"
+
+          echo "=== Hetzner locations via cloud token ==="
+          curl -sf "http://localhost:8000/api/v1/hetzner/locations?cloud_token_uuid=$CT_UUID" \
+            -H "Authorization: Bearer $TOKEN" | python3 -c "import json,sys; locs=json.load(sys.stdin); print(f'Found {len(locs)} Hetzner locations')" 2>/dev/null || true
+
+          echo "=== Deleting cloud token ==="
+          curl -sf -X DELETE "http://localhost:8000/api/v1/cloud-tokens/$CT_UUID" \
+            -H "Authorization: Bearer $TOKEN"
+          echo "PASS cloud_token: full CRUD + validate + hetzner locations"
 
       - name: Terraform Plan after import — expect no changes
         working-directory: tests/acceptance

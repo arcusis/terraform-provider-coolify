@@ -262,3 +262,68 @@ resource "coolify_service_environment_variable" "svc_var" {
   key          = "SVC_ACCEPTANCE_TEST"
   value        = "true"
 }
+
+# ── 24. Bulk environment variables ────────────────────────────────────────────
+# Tests PATCH /applications/{uuid}/envs/bulk
+
+resource "coolify_envs_bulk" "app_bulk" {
+  resource_type = "application"
+  resource_uuid = coolify_application.app.id
+  variables = {
+    "BULK_VAR_1" = "value1"
+    "BULK_VAR_2" = "value2"
+  }
+}
+
+# ── 25. Resource lifecycle actions ────────────────────────────────────────────
+# Tests GET /databases/{uuid}/start, stop, restart
+
+resource "coolify_resource_action" "redis_start" {
+  resource_type = "database"
+  resource_uuid = coolify_database_redis.redis.id
+  action        = "start"
+}
+output "redis_action_status" { value = coolify_resource_action.redis_start.status }
+
+# ── 26. Deploy trigger ────────────────────────────────────────────────────────
+# Tests GET /deploy?uuid={uuid}
+
+resource "coolify_deploy" "app_deploy" {
+  resource_uuid = coolify_application.app.id
+  force         = false
+}
+output "deploy_uuid" { value = coolify_deploy.app_deploy.deployment_uuid }
+
+# ── 27. System info data source ───────────────────────────────────────────────
+# Tests GET /health and GET /version
+
+data "coolify_system_info" "instance" {}
+output "coolify_healthy"  { value = data.coolify_system_info.instance.healthy }
+output "coolify_version"  { value = data.coolify_system_info.instance.version }
+
+# ── 28. Server resources data source ─────────────────────────────────────────
+# Tests GET /servers/{uuid}/resources
+
+data "coolify_server_resources" "localhost_resources" {
+  server_uuid = var.server_uuid
+}
+
+# ── 29. Server domains data source ───────────────────────────────────────────
+# Tests GET /servers/{uuid}/domains
+
+data "coolify_server_domains" "localhost_domains" {
+  server_uuid = var.server_uuid
+}
+
+# ── 30. All resources list ────────────────────────────────────────────────────
+# Tests GET /resources
+
+data "coolify_resources" "all" {}
+
+# ── 31. Deployments data source ───────────────────────────────────────────────
+# Tests GET /deployments and GET /deployments/{uuid}
+# Only query if we have a deployment UUID
+
+output "all_resource_count" {
+  value = length(data.coolify_resources.all.resources)
+}

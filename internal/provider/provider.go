@@ -128,6 +128,10 @@ func (p *CoolifyProvider) Resources(_ context.Context) []func() resource.Resourc
 		resources.NewDatabaseEnvironmentVariableResource,
 		// Environment variables
 		resources.NewEnvironmentVariableResource,
+		// Lifecycle & operations
+		resources.NewResourceActionResource,
+		resources.NewDeployResource,
+		resources.NewEnvsBulkResource,
 	}
 }
 
@@ -143,6 +147,10 @@ func (p *CoolifyProvider) DataSources(_ context.Context) []func() datasource.Dat
 		datasources.NewDeploymentDataSource,
 		datasources.NewHetznerLocationsDataSource,
 		datasources.NewHetznerServerTypesDataSource,
+		datasources.NewServerResourcesDataSource,
+		datasources.NewServerDomainsDataSource,
+		datasources.NewCoolifyResourcesDataSource,
+		datasources.NewSystemInfoDataSource,
 	}
 }
 

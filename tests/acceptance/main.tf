@@ -327,3 +327,40 @@ data "coolify_resources" "all" {}
 output "all_resource_count" {
   value = length(data.coolify_resources.all.resources)
 }
+
+# ── 32. GitHub App ─────────────────────────────────────────────────────────────
+# Tests POST/GET-list/PATCH/DELETE /github-apps
+# Uses dummy credentials — Coolify stores without immediate GitHub validation
+
+resource "coolify_github_app" "test" {
+  name             = "acceptance-github-app"
+  api_url          = "https://api.github.com"
+  html_url         = "https://github.com"
+  app_id           = 99999
+  installation_id  = 99999
+  client_id        = "Iv1.acceptance_test_ci"
+  client_secret    = "dummy_client_secret_acceptance_test"
+  private_key_uuid = coolify_private_key.test.id
+}
+output "github_app_id" { value = coolify_github_app.test.id }
+
+# ── 33. PR preview management ─────────────────────────────────────────────────
+# Tests DELETE /applications/{uuid}/previews/{pull_request_id}
+# PR preview won't exist but the endpoint is called (returns 404 = endpoint works)
+
+resource "coolify_application_preview" "pr1" {
+  application_uuid = coolify_application.app.id
+  pull_request_id  = 1
+}
+
+# ── 34. Deployments data sources ──────────────────────────────────────────────
+# Tests GET /deployments and GET /deployments/applications/{uuid}
+
+data "coolify_deployments" "all" {}
+
+data "coolify_application_deployments" "app_deploys" {
+  application_uuid = coolify_application.app.id
+}
+
+output "total_deployment_count" { value = length(data.coolify_deployments.all.deployments) }
+output "app_deployment_count"   { value = length(data.coolify_application_deployments.app_deploys.deployments) }

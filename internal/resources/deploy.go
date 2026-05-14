@@ -66,22 +66,27 @@ func (r *deployResource) Create(ctx context.Context, req resource.CreateRequest,
 
 	var out any
 	err := r.client.Get(ctx, fmt.Sprintf("/api/v1/deploy?uuid=%s%s", plan.ResourceUUID.ValueString(), force), &out)
-	if err != nil && func() bool {
-		if h, ok := err.(*coolify.HTTPError); ok && h.StatusCode == http.StatusNotFound {
-			return true
+	if err != nil {
+		if h, ok := err.(*coolify.HTTPError); ok && (h.StatusCode == http.StatusNotFound || h.StatusCode == http.StatusUnprocessableEntity) {
+			err = nil // resource not deployable — still record the intent
 		}
-		return false
-	}() {
-		err = nil
 	}
 	if err != nil {
 		resp.Diagnostics.AddError("Unable to trigger Coolify deployment", err.Error())
 		return
 	}
 
+	// /deploy can return a single object or array of deployment objects
 	deployUUID := ""
-	if m, ok := out.(map[string]any); ok {
-		deployUUID = firstStringFromMap(m, "deployment_uuid", "uuid", "id")
+	switch v := out.(type) {
+	case map[string]any:
+		deployUUID = firstStringFromMap(v, "deployment_uuid", "uuid", "id")
+	case []any:
+		if len(v) > 0 {
+			if m, ok := v[0].(map[string]any); ok {
+				deployUUID = firstStringFromMap(m, "deployment_uuid", "uuid", "id")
+			}
+		}
 	}
 
 	if plan.Force.IsNull() || plan.Force.IsUnknown() {

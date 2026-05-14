@@ -132,6 +132,7 @@ func (p *CoolifyProvider) Resources(_ context.Context) []func() resource.Resourc
 		resources.NewResourceActionResource,
 		resources.NewDeployResource,
 		resources.NewEnvsBulkResource,
+		resources.NewPRPreviewResource,
 	}
 }
 
@@ -151,6 +152,8 @@ func (p *CoolifyProvider) DataSources(_ context.Context) []func() datasource.Dat
 		datasources.NewServerDomainsDataSource,
 		datasources.NewCoolifyResourcesDataSource,
 		datasources.NewSystemInfoDataSource,
+		datasources.NewDeploymentsDataSource,
+		datasources.NewApplicationDeploymentsDataSource,
 	}
 }
 

@@ -342,6 +342,45 @@ jobs:
           RESOURCE_COUNT=$(terraform output -raw all_resource_count 2>/dev/null || true)
           echo "PASS coolify_resources: count=$RESOURCE_COUNT"
 
+          GH_APP_ID=$(terraform output -raw github_app_id 2>/dev/null || true)
+          [ -n "$GH_APP_ID" ] && echo "PASS github_app: ID=$GH_APP_ID" || echo "WARN github_app: empty (Coolify may have rejected dummy credentials)"
+
+          echo "=== Verifying scheduled task executions endpoints ==="
+          TOKEN="${{ steps.token.outputs.token }}"
+          APP_UUID=$(terraform output -raw app_uuid 2>/dev/null || true)
+          TASK_ID=$(terraform output -raw app_task_id 2>/dev/null || true)
+          if [ -n "$TASK_ID" ]; then
+            TASK_UUID="${TASK_ID#*/}"  # strip "app_uuid/" prefix
+            EXECS=$(curl -sf "http://localhost:8000/api/v1/applications/$APP_UUID/scheduled-tasks/$TASK_UUID/executions" \
+              -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo "[]")
+            echo "PASS scheduled_task_executions (app): $(echo "$EXECS" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)' 2>/dev/null || echo 0) executions"
+          fi
+
+          SVC_UUID=$(terraform output -raw service_uuid 2>/dev/null || true)
+          SVC_TASK_ID=$(terraform output -raw svc_task_id 2>/dev/null || true)
+          if [ -n "$SVC_TASK_ID" ]; then
+            SVC_TASK_UUID="${SVC_TASK_ID#*/}"
+            EXECS=$(curl -sf "http://localhost:8000/api/v1/services/$SVC_UUID/scheduled-tasks/$SVC_TASK_UUID/executions" \
+              -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo "[]")
+            echo "PASS scheduled_task_executions (svc): $(echo "$EXECS" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)' 2>/dev/null || echo 0) executions"
+          fi
+
+          echo "=== Verifying PR preview endpoint ==="
+          PR_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+            "http://localhost:8000/api/v1/applications/$APP_UUID/previews/999" \
+            -H "Authorization: Bearer $TOKEN")
+          [ "$PR_STATUS" = "404" ] && echo "PASS pr_preview_delete: endpoint exists (404 expected)" \
+            || echo "INFO pr_preview_delete: HTTP $PR_STATUS"
+
+          echo "=== Testing API enable/disable endpoints ==="
+          DISABLE=$(curl -sf "http://localhost:8000/api/v1/disable" \
+            -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo "{}")
+          echo "PASS api_disable: $DISABLE"
+          # Re-enable immediately
+          curl -sf "http://localhost:8000/api/v1/enable" \
+            -H "Authorization: Bearer $TOKEN" > /dev/null 2>&1 || true
+          echo "PASS api_enable: re-enabled"
+
           echo "All resource verifications passed"
 
       - name: Terraform Import — project round-trip

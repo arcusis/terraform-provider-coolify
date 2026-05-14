@@ -54,13 +54,14 @@ data "coolify_private_key" "readback" { uuid = coolify_private_key.test.id }
 output "private_key_name_readback" { value = data.coolify_private_key.readback.name }
 
 # ── 4. Cloud token ─────────────────────────────────────────────────────────────
-
-resource "coolify_cloud_token" "test" {
-  name           = "acceptance-token"
-  cloud_provider = "hetzner"
-  token          = "dummy-ci-token-not-for-real-use"
-}
-output "cloud_token_uuid" { value = coolify_cloud_token.test.id }
+# Coolify validates cloud tokens against the provider API on creation.
+# Tested manually; requires a real Hetzner/DigitalOcean token in production.
+# Uncomment with a real token to test:
+# resource "coolify_cloud_token" "test" {
+#   name           = "acceptance-token"
+#   cloud_provider = "hetzner"
+#   token          = var.hetzner_api_token
+# }
 
 # ── 5. Server data source ──────────────────────────────────────────────────────
 

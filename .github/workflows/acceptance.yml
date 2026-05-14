@@ -314,9 +314,6 @@ jobs:
             [ -n "$v" ] && echo "PASS $label: UUID=$v" || echo "WARN $label: empty"
           done
 
-          CT_UUID=$(terraform output -raw cloud_token_uuid)
-          [ -n "$CT_UUID" ] && echo "PASS cloud_token: UUID=$CT_UUID"
-
           BACKUP_ID=$(terraform output -raw backup_id)
           [ -n "$BACKUP_ID" ] && echo "PASS database_backup: ID=$BACKUP_ID"
 

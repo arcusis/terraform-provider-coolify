@@ -297,6 +297,10 @@ func (r *genericResource) writeAPIDataToState(ctx context.Context, state stateTa
 		if !ok || v == nil {
 			continue
 		}
+		// Don't overwrite sensitive write-only fields (e.g. passwords) with empty API response
+		if f.Sensitive && stringFromAny(v) == "" {
+			continue
+		}
 		switch f.Kind {
 		case kindString:
 			diags.Append(state.SetAttribute(ctx, path.Root(f.Name), types.StringValue(stringFromAny(v)))...)

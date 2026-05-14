@@ -70,7 +70,7 @@ func (r *environmentVariableResource) Create(ctx context.Context, req resource.C
 	}
 
 	var patched map[string]any
-	if err := r.client.Patch(ctx, envsPath(plan.ApplicationUUID.ValueString()), envVarBody(plan), &patched); err != nil {
+	if err := r.client.Post(ctx, envsPath(plan.ApplicationUUID.ValueString()), envVarBody(plan), &patched); err != nil {
 		resp.Diagnostics.AddError("Unable to create Coolify environment variable", err.Error())
 		return
 	}

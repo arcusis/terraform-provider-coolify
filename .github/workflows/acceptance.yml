@@ -95,6 +95,7 @@ jobs:
                 ]);
                 $t = App\Models\Team::create(["name"=>"Root Team","personal_team"=>true]);
                 DB::table("team_user")->insert(["team_id"=>$t->id,"user_id"=>$u->id]);
+                $u->forceFill(["current_team_id"=>$t->id])->save();
                 $plain = Str::random(40);
                 $tid = DB::table("personal_access_tokens")->insertGetId([
                   "tokenable_type"=>"App\\\Models\\\User",

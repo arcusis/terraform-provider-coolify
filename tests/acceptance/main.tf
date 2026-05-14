@@ -616,3 +616,54 @@ resource "coolify_cloud_token_validate" "hetzner" {
 output "cloud_token_validate_status" {
   value = length(coolify_cloud_token_validate.hetzner) > 0 ? coolify_cloud_token_validate.hetzner[0].status : "skipped"
 }
+
+# ── 55. Application scheduled tasks list ──────────────────────────────────────
+# Tests GET /applications/{uuid}/scheduled-tasks
+
+data "coolify_application_scheduled_tasks" "app_tasks" {
+  application_uuid = coolify_application.app.id
+  depends_on       = [coolify_application_scheduled_task.task]
+}
+output "app_task_count" { value = length(data.coolify_application_scheduled_tasks.app_tasks.tasks) }
+
+# ── 56. Service scheduled tasks list ─────────────────────────────────────────
+# Tests GET /services/{uuid}/scheduled-tasks
+
+data "coolify_service_scheduled_tasks" "svc_tasks" {
+  service_uuid = coolify_service.svc.id
+  depends_on   = [coolify_service_scheduled_task.svc_task]
+}
+output "svc_task_count" { value = length(data.coolify_service_scheduled_tasks.svc_tasks.tasks) }
+
+# ── 57. Database backups list ─────────────────────────────────────────────────
+# Tests GET /databases/{uuid}/backups
+
+data "coolify_database_backups" "pg_backups" {
+  database_uuid = coolify_database_postgresql.pg.id
+  depends_on    = [coolify_database_backup.pg_backup]
+}
+output "backup_schedule_count" { value = length(data.coolify_database_backups.pg_backups.backups) }
+
+# ── 58. Project environments list ─────────────────────────────────────────────
+# Tests GET /projects/{uuid}/environments
+
+data "coolify_project_environments" "main_envs" {
+  project_uuid = coolify_project.main.id
+  depends_on   = [coolify_environment.staging]
+}
+output "env_count" { value = length(data.coolify_project_environments.main_envs.environments) }
+
+# ── 59. Current team members data source ─────────────────────────────────────
+# Tests GET /teams/current/members
+
+data "coolify_current_team_members" "active" {}
+output "current_team_member_count" { value = length(data.coolify_current_team_members.active.members) }
+
+# ── 60. GitHub App repositories data source ───────────────────────────────────
+# Tests GET /github-apps/{uuid}/repositories
+# Returns empty list for dummy/test apps — endpoint availability is what matters
+
+data "coolify_github_app_repositories" "test" {
+  github_app_uuid = coolify_github_app.test.id
+}
+output "github_repo_count" { value = length(data.coolify_github_app_repositories.test.repositories) }

@@ -200,6 +200,18 @@ func (p *CoolifyProvider) DataSources(_ context.Context) []func() datasource.Dat
 		datasources.NewServiceScheduledTaskDataSource,
 		datasources.NewApplicationScheduledTaskExecutionsDataSource,
 		datasources.NewServiceScheduledTaskExecutionsDataSource,
+		// Scheduled task lists
+		datasources.NewApplicationScheduledTasksListDataSource,
+		datasources.NewServiceScheduledTasksListDataSource,
+		// Database backups list
+		datasources.NewDatabaseBackupsListDataSource,
+		// GitHub App extended
+		datasources.NewGitHubAppRepositoriesDataSource,
+		datasources.NewGitHubAppBranchesDataSource,
+		// Current team members
+		datasources.NewCurrentTeamMembersDataSource,
+		// Project environments list
+		datasources.NewProjectEnvironmentsDataSource,
 	}
 }
 

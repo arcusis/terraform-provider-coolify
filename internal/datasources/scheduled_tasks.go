@@ -104,19 +104,27 @@ func readScheduledTask(ctx context.Context, client *coolify.Client, parentType, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	path := fmt.Sprintf("/api/v1/%s/%s/scheduled-tasks/%s", parentPath,
-		config.ParentUUID.ValueString(), config.TaskUUID.ValueString())
-	var out map[string]any
-	if err := client.Get(ctx, path, &out); err != nil {
-		resp.Diagnostics.AddError("Unable to read scheduled task", err.Error())
+	// The Coolify API has no single-task GET endpoint; list and filter by UUID
+	listPath := fmt.Sprintf("/api/v1/%s/%s/scheduled-tasks", parentPath, config.ParentUUID.ValueString())
+	var out any
+	if err := client.Get(ctx, listPath, &out); err != nil {
+		resp.Diagnostics.AddError("Unable to list scheduled tasks", err.Error())
 		return
 	}
-	data := objectPayload(out)
-	config.Name = types.StringValue(stringFromAny(data["name"]))
-	config.Command = types.StringValue(stringFromAny(data["command"]))
-	config.Frequency = types.StringValue(stringFromAny(data["frequency"]))
-	config.Enabled = types.BoolValue(boolFromAny(data["enabled"]))
-	resp.Diagnostics.Append(resp.State.Set(ctx, &config)...)
+	targetUUID := config.TaskUUID.ValueString()
+	for _, item := range dataList(out) {
+		if firstString(item, "uuid", "id") == targetUUID {
+			config.Name = types.StringValue(stringFromAny(item["name"]))
+			config.Command = types.StringValue(stringFromAny(item["command"]))
+			config.Frequency = types.StringValue(stringFromAny(item["frequency"]))
+			config.Enabled = types.BoolValue(boolFromAny(item["enabled"]))
+			resp.Diagnostics.Append(resp.State.Set(ctx, &config)...)
+			return
+		}
+	}
+	resp.Diagnostics.AddError("Scheduled task not found",
+		fmt.Sprintf("No %s scheduled task with UUID %s found for parent %s",
+			parentType, targetUUID, config.ParentUUID.ValueString()))
 }
 
 // ── Scheduled task executions list ───────────────────────────────────────────

@@ -10,5 +10,6 @@ func NewClickhouseDatabaseResource() resource.Resource {
 		stringField("name", false, true, false),
 		stringField("clickhouse_admin_user", false, true, false),
 		stringField("clickhouse_admin_password", false, true, true),
+		boolField("instant_deploy", false, true, false),
 	})
 }

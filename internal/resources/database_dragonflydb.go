@@ -9,5 +9,6 @@ func NewDragonflyDatabaseResource() resource.Resource {
 		stringField("environment_name", true, false, false),
 		stringField("name", false, true, false),
 		stringField("dragonfly_password", false, true, true),
+		boolField("instant_deploy", false, true, false),
 	})
 }

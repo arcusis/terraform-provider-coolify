@@ -270,7 +270,7 @@ jobs:
           TF_VAR_server_uuid: ${{ steps.token.outputs.server_uuid }}
           TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
           TF_VAR_cloud_token_uuid: ""
-          TF_VAR_ghost_resource_uuid: ${{ steps.svc_resource.outputs.ghost_resource_uuid || '' }}
+          TF_VAR_ghost_resource_uuid: ""
         run: |
           rm -rf .terraform .terraform.lock.hcl
           terraform plan -no-color
@@ -283,7 +283,6 @@ jobs:
           TF_VAR_server_uuid: ${{ steps.token.outputs.server_uuid }}
           TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
           TF_VAR_cloud_token_uuid: ""
-          TF_VAR_ghost_resource_uuid: ${{ steps.svc_resource.outputs.ghost_resource_uuid || '' }}
           TF_VAR_ghost_resource_uuid: ""
         run: terraform apply -auto-approve -no-color
 
@@ -297,13 +296,8 @@ jobs:
           if [ -n "$SVC_UUID" ]; then
             RESOURCE_UUID=$(curl -sf "http://localhost:8000/api/v1/services/$SVC_UUID" \
               -H "Authorization: Bearer $TOKEN" \
-              | python3 -c "
-import json,sys
-d = json.load(sys.stdin)
-apps = d.get('applications', d.get('service_applications', []))
-if apps and isinstance(apps, list) and len(apps) > 0:
-    print(apps[0].get('uuid',''))
-" 2>/dev/null || true)
+              | python3 -c "import json,sys; d=json.load(sys.stdin); apps=d.get('applications',d.get('service_applications',[])); print(apps[0].get('uuid','') if apps else '')" \
+              2>/dev/null || true)
             echo "ghost_resource_uuid=$RESOURCE_UUID" >> "$GITHUB_OUTPUT"
             echo "Service resource UUID: $RESOURCE_UUID"
           fi
@@ -318,9 +312,8 @@ if apps and isinstance(apps, list) and len(apps) > 0:
           TF_VAR_server_uuid: ${{ steps.token.outputs.server_uuid }}
           TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
           TF_VAR_cloud_token_uuid: ""
-          TF_VAR_ghost_resource_uuid: ${{ steps.svc_resource.outputs.ghost_resource_uuid || '' }}
           TF_VAR_ghost_resource_uuid: ${{ steps.svc_resource.outputs.ghost_resource_uuid }}
-        run: terraform apply -auto-approve -no-color -target=coolify_service_storage.svc_vol
+        run: terraform apply -auto-approve -no-color -target=coolify_service_storage.svc_vol[0]
 
       - name: Verify all resources exist in Coolify API
         working-directory: tests/acceptance
@@ -686,7 +679,7 @@ if apps and isinstance(apps, list) and len(apps) > 0:
           TF_VAR_server_uuid: ${{ steps.token.outputs.server_uuid }}
           TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
           TF_VAR_cloud_token_uuid: ""
-          TF_VAR_ghost_resource_uuid: ${{ steps.svc_resource.outputs.ghost_resource_uuid || '' }}
+          TF_VAR_ghost_resource_uuid: ""
         run: |
           UUID=$(terraform output -raw project_uuid)
           terraform state rm coolify_project.main
@@ -774,7 +767,7 @@ if apps and isinstance(apps, list) and len(apps) > 0:
           TF_VAR_server_uuid: ${{ steps.token.outputs.server_uuid }}
           TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
           TF_VAR_cloud_token_uuid: ""
-          TF_VAR_ghost_resource_uuid: ${{ steps.svc_resource.outputs.ghost_resource_uuid || '' }}
+          TF_VAR_ghost_resource_uuid: ""
         run: |
           terraform plan -detailed-exitcode -no-color
           echo "No-op plan confirmed"
@@ -788,7 +781,7 @@ if apps and isinstance(apps, list) and len(apps) > 0:
           TF_VAR_server_uuid: ${{ steps.token.outputs.server_uuid }}
           TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
           TF_VAR_cloud_token_uuid: ""
-          TF_VAR_ghost_resource_uuid: ${{ steps.svc_resource.outputs.ghost_resource_uuid || '' }}
+          TF_VAR_ghost_resource_uuid: ""
         run: terraform destroy -auto-approve -no-color 2>&1 || true
 
       - name: Verify cleanup — 0 projects remaining

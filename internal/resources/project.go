@@ -28,6 +28,7 @@ const (
 
 type resourceField struct {
 	Name        string
+	APIName     string // API key to use when different from Name (avoids Terraform reserved words)
 	Kind        fieldKind
 	Required    bool
 	Optional    bool
@@ -254,7 +255,11 @@ func (r *genericResource) bodyFromVals(vals map[string]any) map[string]any {
 			continue
 		}
 		if v, ok := vals[f.Name]; ok {
-			body[f.Name] = v
+			key := f.Name
+			if f.APIName != "" {
+				key = f.APIName
+			}
+			body[key] = v
 		}
 	}
 	return body
@@ -297,7 +302,11 @@ func (r *genericResource) writeAPIDataToState(ctx context.Context, state stateTa
 		if f.SkipAPIRead {
 			continue
 		}
-		v, ok := data[f.Name]
+		apiKey := f.Name
+		if f.APIName != "" {
+			apiKey = f.APIName
+		}
+		v, ok := data[apiKey]
 		if !ok || v == nil {
 			continue
 		}

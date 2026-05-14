@@ -114,7 +114,8 @@ jobs:
           sleep 15
 
       - name: Verify Coolify is up
-        run: curl -sf http://localhost:8000 -o /dev/null -w "HTTP: %{http_code}\n"
+        run: |
+          curl -sf http://localhost:8000 -o /dev/null -w "HTTP: %{http_code}\n"
 
       - name: Get API token
         id: token

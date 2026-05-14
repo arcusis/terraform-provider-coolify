@@ -69,84 +69,117 @@ jobs:
           CONTAINER=$(docker ps --filter "name=^/coolify$" --format "{{.ID}}" | head -1)
           echo "Coolify container: $CONTAINER"
 
-          # Users and teams should be created correctly by install.sh
-          echo "Users in DB:"
+          # Write PHP setup script — no bash quoting issues, full error output
+          cat > /tmp/ci-setup.php <<'PHPEOF'
+          <?php
+          try {
+              $count = \App\Models\User::count();
+              echo "Users in DB: $count\n";
+
+              if ($count > 0) {
+                  $u = \App\Models\User::first();
+                  echo "Existing user id={$u->id} email={$u->email}\n";
+              } else {
+                  $u = \App\Models\User::create([
+                      'name'               => 'CI Admin',
+                      'email'              => 'ci@test.example.com',
+                      'password'           => \Illuminate\Support\Facades\Hash::make('CItest1!Password'),
+                      'email_verified_at'  => now(),
+                  ]);
+                  echo "Created user id={$u->id}\n";
+
+                  $t = \App\Models\Team::create(['name' => 'Root Team', 'personal_team' => true]);
+                  echo "Created team id={$t->id}\n";
+
+                  \Illuminate\Support\Facades\DB::table('team_user')->insert([
+                      'team_id' => $t->id,
+                      'user_id' => $u->id,
+                  ]);
+                  echo "Inserted team_user pivot\n";
+
+                  try {
+                      $u->forceFill(['current_team_id' => $t->id])->save();
+                      echo "Set current_team_id={$t->id}\n";
+                  } catch (\Throwable $e2) {
+                      echo "current_team_id col missing (ok): " . $e2->getMessage() . "\n";
+                  }
+              }
+
+              // Resolve team_id for the token
+              $teamId = null;
+              try { $teamId = $u->currentTeam?->id; } catch (\Throwable $_) {}
+              if (!$teamId) {
+                  $teamId = \App\Models\Team::first()?->id;
+              }
+              echo "Team ID for token: $teamId\n";
+
+              $plain = \Illuminate\Support\Str::random(40);
+              $tid = \Illuminate\Support\Facades\DB::table('personal_access_tokens')->insertGetId([
+                  'tokenable_type' => 'App\\Models\\User',
+                  'tokenable_id'   => $u->id,
+                  'name'           => 'ci',
+                  'token'          => hash('sha256', $plain),
+                  'team_id'        => (string) $teamId,
+                  'abilities'      => json_encode(['*']),
+                  'created_at'     => now(),
+                  'updated_at'     => now(),
+              ]);
+              echo "TOKEN:{$tid}|{$plain}\n";
+          } catch (\Throwable $e) {
+              echo "ERROR: " . $e->getMessage() . "\n";
+              echo "  at " . $e->getFile() . ":" . $e->getLine() . "\n";
+          }
+          PHPEOF
+
+          docker cp /tmp/ci-setup.php "$CONTAINER":/tmp/ci-setup.php
+
+          echo "=== Running setup script ==="
           docker exec "$CONTAINER" php artisan tinker \
-            --execute='App\Models\User::all(["id","email"])->each(fn($u) => print($u->id."|".$u->email."\n"));' \
-            2>/dev/null | grep '|' | tail -5
+            --execute="require '/tmp/ci-setup.php';" \
+            2>&1 | tee /tmp/setup.log
 
-          # If install.sh didn't create the root user, do it here via Coolify's
-          # own registration endpoint (creates user + team correctly)
-          USER_COUNT=$(docker exec "$CONTAINER" php artisan tinker \
-            --execute='echo App\Models\User::count();' \
-            2>/dev/null | grep -E '^[0-9]+$' | tail -1 || echo 0)
-          echo "Users in DB: $USER_COUNT"
+          echo "=== Setup log ==="
+          cat /tmp/setup.log
 
-          if [ "$USER_COUNT" = "0" ]; then
-            echo "No user — creating via artisan with direct SQL token..."
-            # teams table has no user_id column; team_user pivot has (team_id, user_id)
-            # createToken fails if no current team context, so we insert the token directly
-            docker exec "$CONTAINER" php artisan tinker \
-              --execute='
-                $u = App\Models\User::create([
-                  "name"=>"admin","email"=>"ci@test.example.com",
-                  "password"=>Hash::make("CItest1!Password"),
-                  "email_verified_at"=>now()
-                ]);
-                $t = App\Models\Team::create(["name"=>"Root Team","personal_team"=>true]);
-                DB::table("team_user")->insert(["team_id"=>$t->id,"user_id"=>$u->id]);
-                $u->forceFill(["current_team_id"=>$t->id])->save();
-                $plain = Str::random(40);
-                $tid = DB::table("personal_access_tokens")->insertGetId([
-                  "tokenable_type"=>"App\\\Models\\\User",
-                  "tokenable_id"=>$u->id,
-                  "name"=>"ci",
-                  "token"=>hash("sha256",$plain),
-                  "team_id"=>(string)$t->id,
-                  "abilities"=>"[\"*\"]",
-                  "created_at"=>now(),
-                  "updated_at"=>now(),
-                ]);
-                echo $tid."|".$plain;
-              ' 2>/dev/null | grep -E '^[0-9]+\|' | tail -1 > /tmp/ci_token.txt
-            TOKEN=$(cat /tmp/ci_token.txt)
-          fi
-
-          # If user already existed (created by install.sh), try standard createToken
-          if [ -z "$TOKEN" ]; then
-            TOKEN=$(docker exec "$CONTAINER" php artisan tinker \
-              --execute='$u=App\Models\User::first(); if($u) echo $u->createToken("ci")->plainTextToken;' \
-              2>/dev/null | grep -E '^[0-9]+\|' | tail -1 || true)
-          fi
+          TOKEN=$(grep '^TOKEN:' /tmp/setup.log | sed 's/^TOKEN://' | tail -1)
 
           echo "Token obtained: $([ -n "$TOKEN" ] && echo YES || echo NO)"
-          [ -n "$TOKEN" ] || { echo "ERROR: failed to get token"; exit 1; }
+          [ -n "$TOKEN" ] || {
+            echo "=== Laravel log ==="
+            docker exec "$CONTAINER" tail -50 /var/www/html/storage/logs/laravel.log 2>/dev/null || true
+            exit 1
+          }
 
           # Smoke test: GET then POST — both must succeed
           echo "=== Smoke test GET ==="
-          GET_STATUS=$(curl -s -o /tmp/get_resp.txt -X GET http://localhost:8000/api/v1/projects \
-            -H "Authorization: Bearer $TOKEN" -w "%{http_code}")
-          echo "GET /api/v1/projects HTTP $GET_STATUS: $(cat /tmp/get_resp.txt | head -c 200)"
+          GET_STATUS=$(curl -s -o /tmp/get_resp.txt \
+            -H "Authorization: Bearer $TOKEN" \
+            -w "%{http_code}" \
+            http://localhost:8000/api/v1/projects)
+          echo "GET /api/v1/projects HTTP $GET_STATUS"
+          cat /tmp/get_resp.txt | head -c 300
+          echo
 
           if [ "$GET_STATUS" != "200" ]; then
-            echo "=== Coolify error log ==="
-            docker exec "$CONTAINER" tail -30 /var/www/html/storage/logs/laravel.log 2>/dev/null || true
-            echo "ERROR: GET returned $GET_STATUS"
+            echo "=== Laravel log ==="
+            docker exec "$CONTAINER" tail -50 /var/www/html/storage/logs/laravel.log 2>/dev/null || true
             exit 1
           fi
 
           echo "=== Smoke test POST ==="
-          POST_STATUS=$(curl -s -o /tmp/post_resp.txt -X POST http://localhost:8000/api/v1/projects \
+          POST_STATUS=$(curl -s -o /tmp/post_resp.txt \
+            -X POST http://localhost:8000/api/v1/projects \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             -d '{"name":"smoke","description":"test"}' \
             -w "%{http_code}")
-          echo "POST /api/v1/projects HTTP $POST_STATUS: $(cat /tmp/post_resp.txt | head -c 200)"
+          echo "POST /api/v1/projects HTTP $POST_STATUS"
+          cat /tmp/post_resp.txt | head -c 300
+          echo
 
           if [ "$POST_STATUS" != "201" ]; then
-            echo "=== Coolify error log ==="
-            docker exec "$CONTAINER" tail -30 /var/www/html/storage/logs/laravel.log 2>/dev/null || true
-            echo "ERROR: POST returned $POST_STATUS"
+            echo "=== Laravel log ==="
+            docker exec "$CONTAINER" tail -50 /var/www/html/storage/logs/laravel.log 2>/dev/null || true
             exit 1
           fi
 

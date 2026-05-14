@@ -168,3 +168,27 @@ func stringFromAny(value any) string {
 		return fmt.Sprint(v)
 	}
 }
+
+func int64FromAny(value any) int64 {
+	switch v := value.(type) {
+	case float64:
+		return int64(v)
+	case int:
+		return int64(v)
+	case int64:
+		return v
+	default:
+		return 0
+	}
+}
+
+func boolFromAny(value any) bool {
+	switch v := value.(type) {
+	case bool:
+		return v
+	case float64:
+		return v != 0
+	default:
+		return false
+	}
+}

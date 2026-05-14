@@ -7,6 +7,8 @@ func NewRedisDatabaseResource() resource.Resource {
 		stringField("server_uuid", true, false, false),
 		stringField("project_uuid", true, false, false),
 		stringField("environment_name", true, false, false),
+		stringField("name", false, true, false),
 		stringField("redis_password", false, true, true),
+		boolField("instant_deploy", false, true, false),
 	})
 }

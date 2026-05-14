@@ -98,6 +98,7 @@ func (p *CoolifyProvider) Configure(ctx context.Context, req provider.ConfigureR
 func (p *CoolifyProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		resources.NewProjectResource,
+		resources.NewEnvironmentResource,
 		resources.NewServerResource,
 		resources.NewPrivateKeyResource,
 		resources.NewApplicationResource,
@@ -107,6 +108,9 @@ func (p *CoolifyProvider) Resources(_ context.Context) []func() resource.Resourc
 		resources.NewMariaDBDatabaseResource,
 		resources.NewRedisDatabaseResource,
 		resources.NewMongoDBDatabaseResource,
+		resources.NewKeyDBDatabaseResource,
+		resources.NewDragonflyDatabaseResource,
+		resources.NewClickhouseDatabaseResource,
 		resources.NewEnvironmentVariableResource,
 	}
 }
@@ -115,6 +119,11 @@ func (p *CoolifyProvider) DataSources(_ context.Context) []func() datasource.Dat
 	return []func() datasource.DataSource{
 		datasources.NewTeamDataSource,
 		datasources.NewProjectDataSource,
+		datasources.NewServerDataSource,
+		datasources.NewPrivateKeyDataSource,
+		datasources.NewApplicationDataSource,
+		datasources.NewServiceDataSource,
+		datasources.NewDatabaseDataSource,
 	}
 }
 

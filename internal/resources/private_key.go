@@ -3,9 +3,22 @@ package resources
 import "github.com/hashicorp/terraform-plugin-framework/resource"
 
 func NewPrivateKeyResource() resource.Resource {
-	return newGenericResource("private_key", "private key", "/api/v1/security/keys", "/api/v1/security/keys/%s", []resourceField{
-		stringField("name", true, false, false),
-		stringField("description", true, false, false),
-		stringField("private_key", true, false, true),
-	})
+	return &genericResource{
+		typeName:    "private_key",
+		displayName: "private key",
+		createPath:  func(map[string]string) string { return "/api/v1/security/keys" },
+		readPath:    func(id string) string { return "/api/v1/security/keys/" + id },
+		// Coolify PATCH /security/keys has no UUID in path — must inject UUID into body
+		updatePath: func(_ string) string { return "/api/v1/security/keys" },
+		deletePath: func(id string) string { return "/api/v1/security/keys/" + id },
+		updateBodyTransform: func(id string, body map[string]any) map[string]any {
+			body["uuid"] = id
+			return body
+		},
+		fields: []resourceField{
+			stringField("name", true, false, false),
+			stringField("description", false, true, false),
+			stringField("private_key", true, false, true),
+		},
+	}
 }

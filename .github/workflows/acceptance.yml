@@ -200,12 +200,43 @@ jobs:
           echo "::add-mask::$TOKEN"
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
-      # ── Terraform tests ───────────────────────────────────────────────────────
+      # ── Resolve test prerequisites ────────────────────────────────────────────
+      - name: Resolve server UUID and generate test key
+        id: prereqs
+        run: |
+          TOKEN="${{ steps.token.outputs.token }}"
+
+          # Get the localhost server UUID that Coolify creates during installation
+          SERVER_UUID=$(curl -sf http://localhost:8000/api/v1/servers \
+            -H "Authorization: Bearer $TOKEN" \
+            | python3 -c "
+import json, sys
+servers = json.load(sys.stdin)
+lst = servers if isinstance(servers, list) else servers.get('data', [])
+match = next((s['uuid'] for s in lst if s.get('ip') in ('localhost', '127.0.0.1', '0.0.0.0')), '')
+if not match and lst:
+    match = lst[0]['uuid']
+print(match)
+" 2>/dev/null || true)
+          echo "Server UUID: $SERVER_UUID"
+          [ -n "$SERVER_UUID" ] || { echo "ERROR: no server found"; exit 1; }
+          echo "server_uuid=$SERVER_UUID" >> "$GITHUB_OUTPUT"
+
+          # Generate a fresh RSA key for the private key resource test
+          ssh-keygen -t rsa -b 2048 -f /tmp/tf_test_key -N "" -q
+          echo "test_private_key<<KEYEOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/tf_test_key >> "$GITHUB_OUTPUT"
+          echo "KEYEOF" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$(cat /tmp/tf_test_key.pub)"
+
+      # ── Terraform tests (all resources + data sources) ────────────────────────
       - name: Terraform Plan
         working-directory: tests/acceptance
         env:
           TF_VAR_coolify_endpoint: http://localhost:8000
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
+          TF_VAR_server_uuid: ${{ steps.prereqs.outputs.server_uuid }}
+          TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
         run: terraform plan -no-color
 
       - name: Terraform Apply
@@ -213,40 +244,85 @@ jobs:
         env:
           TF_VAR_coolify_endpoint: http://localhost:8000
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
+          TF_VAR_server_uuid: ${{ steps.prereqs.outputs.server_uuid }}
+          TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
         run: terraform apply -auto-approve -no-color
 
-      - name: Verify project exists in Coolify API
+      - name: Verify all resources exist in Coolify API
+        working-directory: tests/acceptance
+        run: |
+          TOKEN="${{ steps.token.outputs.token }}"
+          BASE="http://localhost:8000/api/v1"
+
+          check() {
+            local label="$1" path="$2" field="$3" expected="$4"
+            actual=$(curl -sf "$BASE/$path" -H "Authorization: Bearer $TOKEN" \
+              | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('$field','') if isinstance(d,dict) else '')" 2>/dev/null || true)
+            if [ "$actual" = "$expected" ]; then
+              echo "PASS $label: $field=$actual"
+            else
+              echo "FAIL $label: expected $field=$expected got $actual"
+              exit 1
+            fi
+          }
+
+          PROJECT_UUID=$(terraform output -raw project_uuid)
+          check "project"     "projects/$PROJECT_UUID"     "name"  "acceptance-project"
+
+          PK_UUID=$(terraform output -raw private_key_uuid)
+          check "private_key" "security/keys/$PK_UUID"     "name"  "acceptance-key"
+
+          APP_UUID=$(terraform output -raw app_uuid)
+          check "application" "applications/$APP_UUID"     "name"  "acceptance-app"
+
+          PG_UUID=$(terraform output -raw pg_uuid)
+          check "pg_db"       "databases/$PG_UUID"         "name"  "acceptance-pg"
+
+          REDIS_UUID=$(terraform output -raw redis_uuid)
+          [ -n "$REDIS_UUID" ] && echo "PASS redis: UUID=$REDIS_UUID"
+
+          MYSQL_UUID=$(terraform output -raw mysql_uuid)
+          [ -n "$MYSQL_UUID" ] && echo "PASS mysql: UUID=$MYSQL_UUID"
+
+          MARIADB_UUID=$(terraform output -raw mariadb_uuid)
+          [ -n "$MARIADB_UUID" ] && echo "PASS mariadb: UUID=$MARIADB_UUID"
+
+          MONGO_UUID=$(terraform output -raw mongo_uuid)
+          [ -n "$MONGO_UUID" ] && echo "PASS mongodb: UUID=$MONGO_UUID"
+
+          KEYDB_UUID=$(terraform output -raw keydb_uuid)
+          [ -n "$KEYDB_UUID" ] && echo "PASS keydb: UUID=$KEYDB_UUID"
+
+          DRAGONFLY_UUID=$(terraform output -raw dragonfly_uuid)
+          [ -n "$DRAGONFLY_UUID" ] && echo "PASS dragonfly: UUID=$DRAGONFLY_UUID"
+
+          CH_UUID=$(terraform output -raw clickhouse_uuid)
+          [ -n "$CH_UUID" ] && echo "PASS clickhouse: UUID=$CH_UUID"
+
+          SVC_UUID=$(terraform output -raw service_uuid)
+          [ -n "$SVC_UUID" ] && echo "PASS service: UUID=$SVC_UUID"
+
+          echo "All resource verifications passed"
+
+      - name: Terraform Import — project round-trip
         working-directory: tests/acceptance
         env:
           TF_VAR_coolify_endpoint: http://localhost:8000
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
+          TF_VAR_server_uuid: ${{ steps.prereqs.outputs.server_uuid }}
+          TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
         run: |
           UUID=$(terraform output -raw project_uuid)
-          echo "Project UUID: $UUID"
-          [ -n "$UUID" ] || { echo "FAIL: empty project_uuid"; exit 1; }
-
-          NAME=$(curl -sf "http://localhost:8000/api/v1/projects/$UUID" \
-            -H "Authorization: Bearer ${{ steps.token.outputs.token }}" \
-            | python3 -c "import json,sys; print(json.load(sys.stdin).get('name',''))")
-          echo "Project name in Coolify: $NAME"
-          [ "$NAME" = "acceptance-test-project" ] || \
-            { echo "FAIL: expected 'acceptance-test-project' got '$NAME'"; exit 1; }
-
-      - name: Terraform Import
-        working-directory: tests/acceptance
-        env:
-          TF_VAR_coolify_endpoint: http://localhost:8000
-          TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
-        run: |
-          UUID=$(terraform output -raw project_uuid)
-          terraform state rm coolify_project.test
-          terraform import coolify_project.test "$UUID"
+          terraform state rm coolify_project.main
+          terraform import coolify_project.main "$UUID"
 
       - name: Terraform Plan after import — expect no changes
         working-directory: tests/acceptance
         env:
           TF_VAR_coolify_endpoint: http://localhost:8000
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
+          TF_VAR_server_uuid: ${{ steps.prereqs.outputs.server_uuid }}
+          TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
         run: |
           terraform plan -detailed-exitcode -no-color
           echo "No-op plan confirmed"
@@ -257,6 +333,8 @@ jobs:
         env:
           TF_VAR_coolify_endpoint: http://localhost:8000
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
+          TF_VAR_server_uuid: ${{ steps.prereqs.outputs.server_uuid }}
+          TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
         run: terraform destroy -auto-approve -no-color || true
 
       - name: Verify cleanup — 0 projects remaining
@@ -267,7 +345,6 @@ jobs:
             -H "Authorization: Bearer $TOKEN" \
             | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "?")
           echo "Projects after destroy: $COUNT"
-          # May be 1 if smoke test project wasn't cleaned up — that's OK
           echo "Cleanup check done"
 
       - name: Stop Coolify

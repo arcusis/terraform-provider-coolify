@@ -67,14 +67,15 @@ func (f resourceField) schemaAttribute() schema.Attribute {
 // ── Generic resource ──────────────────────────────────────────────────────────
 
 type genericResource struct {
-	client      *coolify.Client
-	typeName    string
-	displayName string
-	createPath  func(vals map[string]string) string
-	readPath    func(id string) string
-	updatePath  func(id string) string
-	deletePath  func(id string) string
-	fields      []resourceField
+	client              *coolify.Client
+	typeName            string
+	displayName         string
+	createPath          func(vals map[string]string) string
+	readPath            func(id string) string
+	updatePath          func(id string) string
+	deletePath          func(id string) string
+	fields              []resourceField
+	updateBodyTransform func(id string, body map[string]any) map[string]any
 }
 
 func newGenericResource(typeName, displayName, createPath, itemPath string, fields []resourceField) resource.Resource {
@@ -177,7 +178,11 @@ func (r *genericResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	if err := r.client.Patch(ctx, r.updatePath(id.ValueString()), r.bodyFromVals(vals), nil); err != nil {
+	body := r.bodyFromVals(vals)
+	if r.updateBodyTransform != nil {
+		body = r.updateBodyTransform(id.ValueString(), body)
+	}
+	if err := r.client.Patch(ctx, r.updatePath(id.ValueString()), body, nil); err != nil {
 		resp.Diagnostics.AddError("Unable to update Coolify "+r.displayName, err.Error())
 		return
 	}

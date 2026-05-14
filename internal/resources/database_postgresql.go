@@ -7,8 +7,10 @@ func NewPostgreSQLDatabaseResource() resource.Resource {
 		stringField("server_uuid", true, false, false),
 		stringField("project_uuid", true, false, false),
 		stringField("environment_name", true, false, false),
+		stringField("name", false, true, false),
 		stringField("postgres_user", false, true, false),
 		stringField("postgres_password", false, true, true),
 		stringField("postgres_db", false, true, false),
+		boolField("instant_deploy", false, true, false),
 	})
 }

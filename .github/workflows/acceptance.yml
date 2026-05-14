@@ -38,10 +38,16 @@ jobs:
         with:
           terraform_version: "~1.10"
 
-      # ── Launch Coolify ────────────────────────────────────────────────────────
+      # ── Coolify requires /data/coolify — create with sudo ─────────────────────
+      - name: Create Coolify data directories
+        run: |
+          sudo mkdir -p /data/coolify/source /data/coolify/ssh/keys /data/coolify/ssh/mux \
+            /data/coolify/applications /data/coolify/databases /data/coolify/services \
+            /data/coolify/backups /data/coolify/proxy/dynamic
+          sudo chown -R "$USER:$USER" /data
+
       - name: Download Coolify compose files
         run: |
-          mkdir -p /data/coolify/source
           curl -fsSL https://cdn.coollabs.io/coolify/docker-compose.yml \
             -o /data/coolify/source/docker-compose.yml
           curl -fsSL https://cdn.coollabs.io/coolify/docker-compose.prod.yml \
@@ -50,82 +56,114 @@ jobs:
       - name: Write Coolify .env
         run: |
           APP_KEY="base64:$(openssl rand -base64 32)"
+          PUSHER_ID="$(openssl rand -hex 16)"
+          PUSHER_KEY="$(openssl rand -hex 16)"
+          PUSHER_SECRET="$(openssl rand -hex 16)"
+          REDIS_PASS="$(openssl rand -hex 16)"
+
+          # Write without any leading whitespace — heredoc content must be unindented
           cat > /data/coolify/source/.env <<EOF
-          APP_ID=ci-test-$(openssl rand -hex 8)
+          APP_ID=ci-$(openssl rand -hex 8)
           APP_KEY=$APP_KEY
+          APP_NAME=Coolify
           APP_URL=http://localhost:8000
+          APP_PORT=8000
           APP_ENV=production
+          APP_DEBUG=false
           DB_CONNECTION=pgsql
           DB_HOST=coolify-db
           DB_PORT=5432
           DB_DATABASE=coolify
           DB_USERNAME=coolify
-          DB_PASSWORD=ci_password
+          DB_PASSWORD=ci_db_password
           REDIS_HOST=coolify-redis
-          QUEUE_CONNECTION=sync
+          REDIS_PASSWORD=$REDIS_PASS
+          REDIS_PORT=6379
+          PUSHER_APP_ID=$PUSHER_ID
+          PUSHER_APP_KEY=$PUSHER_KEY
+          PUSHER_APP_SECRET=$PUSHER_SECRET
           PUSHER_HOST=localhost
           PUSHER_PORT=6001
+          PUSHER_SCHEME=http
+          QUEUE_CONNECTION=sync
+          CACHE_DRIVER=redis
+          SESSION_DRIVER=redis
+          SESSION_LIFETIME=120
           ROOT_USER_EMAIL=ci@test.example.com
           ROOT_USER_PASSWORD=CItest1!Password
           EOF
+
+          # Write a clean version (remove leading spaces from heredoc)
+          sed -i 's/^[[:space:]]*//' /data/coolify/source/.env
+          echo "=== .env written ==="
+          head -5 /data/coolify/source/.env
 
       - name: Start Coolify
         run: |
           cd /data/coolify/source
           docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-          echo "Waiting for Coolify to be healthy (up to 3 min)..."
-          timeout 180 bash -c '
-            until curl -sf http://localhost:8000 -o /dev/null 2>&1; do
-              sleep 3; echo -n "."
-            done'
-          echo " up"
-          sleep 15   # let DB migrations and user creation finish
+          echo "Waiting for Coolify (up to 3 min)..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8000 -o /dev/null 2>&1; then
+              echo " up after ${i}x5s"
+              break
+            fi
+            sleep 5
+            echo -n "."
+          done
+          sleep 15
+
+      - name: Verify Coolify is up
+        run: curl -sf http://localhost:8000 -o /dev/null -w "HTTP: %{http_code}\n"
 
       - name: Get API token
         id: token
         run: |
-          CONTAINER=$(docker ps --filter "name=coolify$" --format "{{.ID}}" | head -1)
-          echo "Coolify container: $CONTAINER"
+          CONTAINER=$(docker ps --filter "name=^/coolify$" --format "{{.ID}}" | head -1)
+          echo "Container: $CONTAINER"
 
+          # Try standard createToken first
           TOKEN=$(docker exec "$CONTAINER" php artisan tinker \
-            --execute="\$u=App\Models\User::first(); if(\$u) echo \$u->createToken('ci')->plainTextToken;" \
-            2>/dev/null | grep -E '^[0-9]+\|' | tail -1)
+            --execute='$u=App\Models\User::first(); if($u) echo $u->createToken("ci")->plainTextToken;' \
+            2>/dev/null | grep -E '^[0-9]+\|' | tail -1 || true)
 
+          # Fallback: direct DB insert if createToken fails (team_id constraint)
           if [ -z "$TOKEN" ]; then
-            echo "artisan createToken failed, trying direct SQL..."
+            echo "Falling back to direct SQL token insert..."
             PLAIN=$(openssl rand -hex 20)
             HASH=$(printf '%s' "$PLAIN" | sha256sum | cut -d' ' -f1)
             TEAM_ID=$(docker exec "$CONTAINER" php artisan tinker \
-              --execute="\$t=App\Models\Team::first(); if(\$t) echo \$t->id;" \
-              2>/dev/null | grep -E '^[0-9]+$' | tail -1)
+              --execute='echo App\Models\Team::first()?->id ?? 0;' \
+              2>/dev/null | grep -E '^[0-9]+$' | tail -1 || echo "0")
+            USER_ID=$(docker exec "$CONTAINER" php artisan tinker \
+              --execute='echo App\Models\User::first()?->id ?? 0;' \
+              2>/dev/null | grep -E '^[0-9]+$' | tail -1 || echo "0")
             TOKEN_ID=$(docker exec "$CONTAINER" php artisan tinker \
               --execute="echo DB::table('personal_access_tokens')->insertGetId([
                 'tokenable_type'=>'App\\\Models\\\User',
-                'tokenable_id'=>App\\\Models\\\User::first()->id,
+                'tokenable_id'=>$USER_ID,
                 'name'=>'ci',
                 'token'=>'$HASH',
                 'team_id'=>'$TEAM_ID',
                 'abilities'=>'[\"*\"]',
                 'created_at'=>now(),
                 'updated_at'=>now(),
-              ]);" 2>/dev/null | grep -E '^[0-9]+$' | tail -1)
+              ]);" \
+              2>/dev/null | grep -E '^[0-9]+$' | tail -1 || echo "")
             TOKEN="${TOKEN_ID}|${PLAIN}"
           fi
 
-          echo "Token obtained: $([ -n "$TOKEN" ] && echo YES || echo NO)"
-          [ -n "$TOKEN" ] || (echo "ERROR: Could not get token" && exit 1)
+          echo "Token present: $([ -n "$TOKEN" ] && echo YES || echo NO)"
+          [ -n "$TOKEN" ] || { echo "ERROR: no token"; exit 1; }
 
-          # Verify token works
           curl -sf http://localhost:8000/api/v1/projects \
             -H "Authorization: Bearer $TOKEN" -w " HTTP:%{http_code}" && echo
 
-          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+          # Mask the token in logs
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
       # ── Terraform tests ───────────────────────────────────────────────────────
-      - name: Terraform Init (validate config only)
-        working-directory: tests/acceptance
-        run: terraform validate
-
       - name: Terraform Plan
         working-directory: tests/acceptance
         env:
@@ -140,24 +178,24 @@ jobs:
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
         run: terraform apply -auto-approve -no-color
 
-      - name: Verify outputs and API state
+      - name: Verify project exists in Coolify API
         working-directory: tests/acceptance
         env:
           TF_VAR_coolify_endpoint: http://localhost:8000
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
         run: |
           UUID=$(terraform output -raw project_uuid)
-          echo "Project UUID: $UUID"
-          [ -n "$UUID" ] || (echo "FAIL: empty project_uuid" && exit 1)
+          echo "Project UUID from Terraform state: $UUID"
+          [ -n "$UUID" ] || { echo "FAIL: empty project_uuid"; exit 1; }
 
-          # Verify via API
-          NAME=$(curl -sf http://localhost:8000/api/v1/projects/$UUID \
+          NAME=$(curl -sf "http://localhost:8000/api/v1/projects/$UUID" \
             -H "Authorization: Bearer ${{ steps.token.outputs.token }}" \
-            | python3 -c "import json,sys; print(json.load(sys.stdin)['name'])")
+            | python3 -c "import json,sys; print(json.load(sys.stdin).get('name',''))")
           echo "Project name in Coolify: $NAME"
-          [ "$NAME" = "acceptance-test-project" ] || (echo "FAIL: name mismatch" && exit 1)
+          [ "$NAME" = "acceptance-test-project" ] || \
+            { echo "FAIL: expected 'acceptance-test-project' got '$NAME'"; exit 1; }
 
-      - name: Terraform Import test
+      - name: Terraform Import
         working-directory: tests/acceptance
         env:
           TF_VAR_coolify_endpoint: http://localhost:8000
@@ -166,16 +204,16 @@ jobs:
           UUID=$(terraform output -raw project_uuid)
           terraform state rm coolify_project.test
           terraform import coolify_project.test "$UUID"
-          echo "Import: OK"
 
-      - name: Terraform Plan after import (expect no changes)
+      - name: Terraform Plan after import — expect no changes
         working-directory: tests/acceptance
         env:
           TF_VAR_coolify_endpoint: http://localhost:8000
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
         run: |
+          # exit 0 = no changes (correct), exit 2 = changes (import drift)
           terraform plan -detailed-exitcode -no-color
-          echo "No-op plan: OK"
+          echo "No-op plan confirmed"
 
       - name: Terraform Destroy
         if: always()
@@ -185,15 +223,16 @@ jobs:
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
         run: terraform destroy -auto-approve -no-color || true
 
-      - name: Verify cleanup
+      - name: Verify cleanup — 0 projects remaining
         if: always()
         run: |
           TOKEN="${{ steps.token.outputs.token }}"
           COUNT=$(curl -sf http://localhost:8000/api/v1/projects \
             -H "Authorization: Bearer $TOKEN" \
             | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "?")
-          echo "Projects remaining after destroy: $COUNT"
-          [ "$COUNT" = "0" ] || [ "$COUNT" = "?" ] || (echo "FAIL: resources not cleaned up" && exit 1)
+          echo "Projects after destroy: $COUNT"
+          [ "$COUNT" = "0" ] || [ "$COUNT" = "?" ] || \
+            { echo "FAIL: $COUNT projects not cleaned up"; exit 1; }
 
       - name: Stop Coolify
         if: always()

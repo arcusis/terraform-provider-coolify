@@ -27,13 +27,14 @@ const (
 )
 
 type resourceField struct {
-	Name      string
-	Kind      fieldKind
-	Required  bool
-	Optional  bool
-	Computed  bool
-	Sensitive bool
-	Send      bool
+	Name        string
+	Kind        fieldKind
+	Required    bool
+	Optional    bool
+	Computed    bool
+	Sensitive   bool
+	Send        bool
+	SkipAPIRead bool // don't overwrite from API response (write-only fields the API never returns)
 }
 
 func stringField(name string, required, optional, sensitive bool) resourceField {
@@ -293,11 +294,14 @@ func (r *genericResource) writeAttrsToState(ctx context.Context, state stateTarg
 
 func (r *genericResource) writeAPIDataToState(ctx context.Context, state stateTarget, data map[string]any, diags *diag.Diagnostics) {
 	for _, f := range r.fields {
+		if f.SkipAPIRead {
+			continue
+		}
 		v, ok := data[f.Name]
 		if !ok || v == nil {
 			continue
 		}
-		// Don't overwrite sensitive write-only fields (e.g. passwords) with empty API response
+		// Don't overwrite sensitive fields with empty API response
 		if f.Sensitive && stringFromAny(v) == "" {
 			continue
 		}

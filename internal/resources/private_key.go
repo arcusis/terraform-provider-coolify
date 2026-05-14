@@ -18,7 +18,8 @@ func NewPrivateKeyResource() resource.Resource {
 		fields: []resourceField{
 			stringField("name", true, false, false),
 			stringField("description", false, true, false),
-			stringField("private_key", true, false, true),
+			// Coolify never returns private_key in GET responses — keep plan value
+			{Name: "private_key", Kind: kindString, Required: true, Sensitive: true, Send: true, SkipAPIRead: true},
 		},
 	}
 }

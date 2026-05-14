@@ -69,13 +69,14 @@ func (r *environmentVariableResource) Create(ctx context.Context, req resource.C
 		return
 	}
 
-	var patched map[string]any
-	if err := r.client.Post(ctx, envsPath(plan.ApplicationUUID.ValueString()), envVarBody(plan), &patched); err != nil {
+	var created map[string]any
+	if err := r.client.Post(ctx, envsPath(plan.ApplicationUUID.ValueString()), envVarBody(plan), &created); err != nil {
 		resp.Diagnostics.AddError("Unable to create Coolify environment variable", err.Error())
 		return
 	}
 
-	id := firstStringFromMap(patched, "uuid", "id")
+	applyEnvVarData(&plan, created)
+	id := firstStringFromMap(created, "uuid", "id")
 	if id == "" {
 		found, err := r.find(ctx, plan.ApplicationUUID.ValueString(), "", plan.Key.ValueString())
 		if err != nil {
@@ -87,6 +88,19 @@ func (r *environmentVariableResource) Create(ctx context.Context, req resource.C
 	}
 	if id == "" {
 		id = plan.Key.ValueString()
+	}
+	// Ensure computed bool fields are known (default to false if not returned by API)
+	if plan.IsPreview.IsNull() || plan.IsPreview.IsUnknown() {
+		plan.IsPreview = types.BoolValue(false)
+	}
+	if plan.IsLiteral.IsNull() || plan.IsLiteral.IsUnknown() {
+		plan.IsLiteral = types.BoolValue(false)
+	}
+	if plan.IsMultiline.IsNull() || plan.IsMultiline.IsUnknown() {
+		plan.IsMultiline = types.BoolValue(false)
+	}
+	if plan.IsShownOnce.IsNull() || plan.IsShownOnce.IsUnknown() {
+		plan.IsShownOnce = types.BoolValue(false)
 	}
 	plan.ID = types.StringValue(id)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)

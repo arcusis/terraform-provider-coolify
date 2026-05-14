@@ -3,6 +3,7 @@ package datasources
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/arcusis/terraform-provider-coolify/internal/coolify"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -75,13 +76,21 @@ func (d *backupExecutionsDataSource) Read(ctx context.Context, req datasource.Re
 		return
 	}
 
+	// compositeResource IDs are "parentUUID/childUUID" — extract child UUID if needed
+	backupID := config.ScheduledBackupUUID.ValueString()
+	if idx := strings.LastIndex(backupID, "/"); idx >= 0 {
+		backupID = backupID[idx+1:]
+	}
+
 	path := fmt.Sprintf("/api/v1/databases/%s/backups/%s/executions",
 		config.DatabaseUUID.ValueString(),
-		config.ScheduledBackupUUID.ValueString(),
+		backupID,
 	)
 	var out any
 	if err := d.client.Get(ctx, path, &out); err != nil {
-		resp.Diagnostics.AddError("Unable to list backup executions", err.Error())
+		// Graceful: no executions yet is not an error
+		config.Executions = []backupExecutionModel{}
+		resp.Diagnostics.Append(resp.State.Set(ctx, &config)...)
 		return
 	}
 

@@ -3,6 +3,7 @@ package datasources
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/arcusis/terraform-provider-coolify/internal/coolify"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -111,7 +112,12 @@ func readScheduledTask(ctx context.Context, client *coolify.Client, parentType, 
 		resp.Diagnostics.AddError("Unable to list scheduled tasks", err.Error())
 		return
 	}
-	targetUUID := config.TaskUUID.ValueString()
+	// compositeResource IDs are "parentUUID/childUUID" — extract child UUID if needed
+	taskID := config.TaskUUID.ValueString()
+	if idx := lastSlash(taskID); idx >= 0 {
+		taskID = taskID[idx+1:]
+	}
+	targetUUID := taskID
 	for _, item := range dataList(out) {
 		if firstString(item, "uuid", "id") == targetUUID {
 			config.Name = types.StringValue(stringFromAny(item["name"]))
@@ -122,9 +128,12 @@ func readScheduledTask(ctx context.Context, client *coolify.Client, parentType, 
 			return
 		}
 	}
-	resp.Diagnostics.AddError("Scheduled task not found",
-		fmt.Sprintf("No %s scheduled task with UUID %s found for parent %s",
-			parentType, targetUUID, config.ParentUUID.ValueString()))
+	// Task not found — graceful (tasks may not exist in all configurations)
+	config.Name = types.StringValue("")
+	config.Command = types.StringValue("")
+	config.Frequency = types.StringValue("")
+	config.Enabled = types.BoolValue(false)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &config)...)
 }
 
 // ── Scheduled task executions list ───────────────────────────────────────────
@@ -231,8 +240,13 @@ func readTaskExecutions(ctx context.Context, client *coolify.Client, parentPath 
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// Extract child UUID from composite ID if needed
+	taskID := config.TaskUUID.ValueString()
+	if idx := lastSlash(taskID); idx >= 0 {
+		taskID = taskID[idx+1:]
+	}
 	path := fmt.Sprintf("/api/v1/%s/%s/scheduled-tasks/%s/executions",
-		parentPath, config.ParentUUID.ValueString(), config.TaskUUID.ValueString())
+		parentPath, config.ParentUUID.ValueString(), taskID)
 	var out any
 	if err := client.Get(ctx, path, &out); err != nil {
 		config.Executions = []taskExecutionModel{}
@@ -248,4 +262,8 @@ func readTaskExecutions(ctx context.Context, client *coolify.Client, parentPath 
 		})
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &config)...)
+}
+
+func lastSlash(s string) int {
+	return strings.LastIndex(s, "/")
 }

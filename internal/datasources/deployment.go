@@ -57,6 +57,17 @@ func (d *deploymentDataSource) Read(ctx context.Context, req datasource.ReadRequ
 		return
 	}
 
+	if config.UUID.ValueString() == "" {
+		// UUID may be empty if the triggering deploy resource didn't get a deployment UUID back
+		config.ID = types.StringValue("")
+		config.Status = types.StringValue("unknown")
+		config.ApplicationUUID = types.StringValue("")
+		config.CommitHash = types.StringValue("")
+		config.CommitMessage = types.StringValue("")
+		resp.Diagnostics.Append(resp.State.Set(ctx, &config)...)
+		return
+	}
+
 	var out map[string]any
 	if err := d.client.Get(ctx, fmt.Sprintf("/api/v1/deployments/%s", config.UUID.ValueString()), &out); err != nil {
 		if httpErr, ok := err.(*coolify.HTTPError); ok && httpErr.StatusCode == http.StatusNotFound {

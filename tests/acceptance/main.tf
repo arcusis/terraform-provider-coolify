@@ -189,7 +189,7 @@ resource "coolify_database_environment_variable" "pg_var" {
 
 resource "coolify_database_storage" "pg_vol" {
   database_uuid = coolify_database_postgresql.pg.id
-  type          = "volume"
+  type          = "persistent"
   mount_path    = "/var/lib/postgresql/extra"
   name          = "acceptance-pg-vol"
 }
@@ -258,12 +258,20 @@ data "coolify_service" "svc_readback" { uuid = coolify_service.svc.id }
 # ── 21b. Service storage ───────────────────────────────────────────────────────
 # Tests POST/GET-list/DELETE /services/{uuid}/storages
 
-resource "coolify_service_storage" "svc_vol" {
-  service_uuid = coolify_service.svc.id
-  type         = "volume"
-  mount_path   = "/svc-data"
-  name         = "acceptance-svc-vol"
+variable "ghost_resource_uuid" {
+  default     = ""
+  description = "UUID of the ghost container within the service stack (from workflow)"
 }
+
+resource "coolify_service_storage" "svc_vol" {
+  count         = var.ghost_resource_uuid != "" ? 1 : 0
+  service_uuid  = coolify_service.svc.id
+  type          = "persistent"
+  mount_path    = "/svc-data"
+  name          = "acceptance-svc-vol"
+  resource_uuid = var.ghost_resource_uuid
+}
+output "svc_storage_id" { value = length(coolify_service_storage.svc_vol) > 0 ? coolify_service_storage.svc_vol[0].id : "" }
 output "svc_storage_id" { value = coolify_service_storage.svc_vol.id }
 
 # ── 22. Service scheduled task ────────────────────────────────────────────────
@@ -483,16 +491,20 @@ resource "coolify_service_scheduled_task_execution" "dummy" {
 
 resource "coolify_backup_execution" "dummy" {
   database_uuid        = coolify_database_postgresql.pg.id
-  scheduled_backup_uuid = coolify_database_backup.pg_backup.id
+  scheduled_backup_uuid = local.pg_backup_uuid
   execution_uuid       = "00000000-0000-0000-0000-000000000003"
 }
 
 # ── 43. Backup executions data source ─────────────────────────────────────────
 # Tests GET /databases/{uuid}/backups/{scheduled_backup_uuid}/executions
 
+locals {
+  pg_backup_uuid = split("/", coolify_database_backup.pg_backup.id)[1]
+}
+
 data "coolify_backup_executions" "pg_execs" {
   database_uuid        = coolify_database_postgresql.pg.id
-  scheduled_backup_uuid = coolify_database_backup.pg_backup.id
+  scheduled_backup_uuid = local.pg_backup_uuid
 }
 output "backup_execution_count" { value = length(data.coolify_backup_executions.pg_execs.executions) }
 
@@ -624,6 +636,7 @@ data "coolify_database_backups" "pg_backups" {
   database_uuid = coolify_database_postgresql.pg.id
   depends_on    = [coolify_database_backup.pg_backup]
 }
+output "pg_backup_uuid" { value = local.pg_backup_uuid }
 output "backup_schedule_count" { value = length(data.coolify_database_backups.pg_backups.backups) }
 
 # ── 58. Project environments list ─────────────────────────────────────────────

@@ -53,7 +53,14 @@ func (r *apiSettingsResource) applyState(ctx context.Context, enabled bool) erro
 		path = "/api/v1/disable"
 	}
 	var out any
-	return r.client.Get(ctx, path, &out)
+	err := r.client.Get(ctx, path, &out)
+	if err != nil {
+		if httpErr, ok := err.(*coolify.HTTPError); ok && (httpErr.StatusCode == 403 || httpErr.StatusCode == 404) {
+			// Non-admin tokens may get 403; some versions may not have these endpoints
+			return nil
+		}
+	}
+	return err
 }
 
 func (r *apiSettingsResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {

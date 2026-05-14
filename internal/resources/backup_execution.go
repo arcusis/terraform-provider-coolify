@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/arcusis/terraform-provider-coolify/internal/coolify"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -81,9 +82,14 @@ func (r *backupExecutionResource) Delete(ctx context.Context, req resource.Delet
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// Extract child UUID from composite ID if needed
+	backupID := state.ScheduledBackupUUID.ValueString()
+	if idx := strings.LastIndex(backupID, "/"); idx >= 0 {
+		backupID = backupID[idx+1:]
+	}
 	path := fmt.Sprintf("/api/v1/databases/%s/backups/%s/executions/%s",
 		state.DatabaseUUID.ValueString(),
-		state.ScheduledBackupUUID.ValueString(),
+		backupID,
 		state.ExecutionUUID.ValueString(),
 	)
 	if err := r.client.Delete(ctx, path, nil); err != nil {

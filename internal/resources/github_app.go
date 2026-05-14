@@ -48,7 +48,7 @@ func (r *githubAppResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"client_secret":    schema.StringAttribute{Required: true, Sensitive: true},
 			"private_key_uuid": schema.StringAttribute{Required: true},
 			"organization":     schema.StringAttribute{Optional: true, Computed: true},
-			"webhook_secret":   schema.StringAttribute{Optional: true, Computed: true, Sensitive: true},
+			"webhook_secret":   schema.StringAttribute{Required: true, Sensitive: true},
 			"is_system_wide":   schema.BoolAttribute{Optional: true, Computed: true},
 		},
 	}
@@ -83,9 +83,7 @@ func (r *githubAppResource) Create(ctx context.Context, req resource.CreateReque
 	if !plan.Organization.IsNull() && !plan.Organization.IsUnknown() {
 		body["organization"] = plan.Organization.ValueString()
 	}
-	if !plan.WebhookSecret.IsNull() && !plan.WebhookSecret.IsUnknown() {
-		body["webhook_secret"] = plan.WebhookSecret.ValueString()
-	}
+	body["webhook_secret"] = plan.WebhookSecret.ValueString()
 	if !plan.IsSystemWide.IsNull() && !plan.IsSystemWide.IsUnknown() {
 		body["is_system_wide"] = plan.IsSystemWide.ValueBool()
 	}
@@ -105,9 +103,6 @@ func (r *githubAppResource) Create(ctx context.Context, req resource.CreateReque
 	plan.ID = types.StringValue(id)
 	if plan.Organization.IsNull() || plan.Organization.IsUnknown() {
 		plan.Organization = types.StringValue("")
-	}
-	if plan.WebhookSecret.IsNull() || plan.WebhookSecret.IsUnknown() {
-		plan.WebhookSecret = types.StringValue("")
 	}
 	if plan.IsSystemWide.IsNull() || plan.IsSystemWide.IsUnknown() {
 		plan.IsSystemWide = types.BoolValue(false)

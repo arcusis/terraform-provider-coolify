@@ -340,6 +340,7 @@ resource "coolify_github_app" "test" {
   installation_id  = 99999
   client_id        = "Iv1.acceptance_test_ci"
   client_secret    = "dummy_client_secret_acceptance_test"
+  webhook_secret   = "dummy_webhook_secret_test"
   private_key_uuid = coolify_private_key.test.id
 }
 output "github_app_id" { value = coolify_github_app.test.id }

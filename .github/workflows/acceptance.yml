@@ -213,21 +213,21 @@ jobs:
           echo "$SERVERS_RAW" | head -c 500
           echo
 
-          SERVER_UUID=$(echo "$SERVERS_RAW" \
-            | python3 -c "
-import json,sys
-raw=sys.stdin.read()
-try:
-    d=json.loads(raw)
-except Exception as e:
-    print('',end='')
-    sys.exit(0)
-lst=d if isinstance(d,list) else (d.get('data') or d.get('servers') or [])
-if not lst and isinstance(d,dict):
-    lst=[d]
-m=next((str(s.get('uuid','')) for s in lst if s.get('uuid')),'' )
-print(m)
-" 2>&1)
+          cat > /tmp/get_server_uuid.py <<'PYEOF'
+          import json, sys
+          raw = sys.stdin.read()
+          try:
+              d = json.loads(raw)
+          except Exception:
+              sys.exit(0)
+          lst = d if isinstance(d, list) else (d.get('data') or d.get('servers') or [])
+          if not lst and isinstance(d, dict):
+              lst = [d]
+          m = next((str(s.get('uuid', '')) for s in lst if s.get('uuid')), '')
+          print(m)
+          PYEOF
+
+          SERVER_UUID=$(echo "$SERVERS_RAW" | python3 /tmp/get_server_uuid.py 2>&1)
           echo "Server UUID: $SERVER_UUID"
           [ -n "$SERVER_UUID" ] || { echo "ERROR: no server found"; exit 1; }
           echo "server_uuid=$SERVER_UUID" >> "$GITHUB_OUTPUT"

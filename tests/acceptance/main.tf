@@ -42,7 +42,6 @@ output "project_name_readback" { value = data.coolify_project.readback.name }
 resource "coolify_environment" "staging" {
   project_uuid = coolify_project.main.id
   name         = "staging"
-  description  = "Staging environment for acceptance tests"
 }
 
 output "environment_id" { value = coolify_environment.staging.id }
@@ -129,7 +128,6 @@ resource "coolify_database_mariadb" "mariadb" {
   project_uuid     = coolify_project.main.id
   environment_name = "production"
   name             = "acceptance-mariadb"
-  mysql_database   = "acceptance"
   instant_deploy   = false
 }
 
@@ -191,7 +189,7 @@ resource "coolify_application" "app" {
   project_uuid               = coolify_project.main.id
   server_uuid                = var.server_uuid
   environment_name           = "production"
-  docker_registry_image_name = "nginx:alpine"
+  docker_registry_image_name = "nginx"
   name                       = "acceptance-app"
   ports_exposes              = "80"
   instant_deploy             = false

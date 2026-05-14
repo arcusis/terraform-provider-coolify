@@ -19,7 +19,6 @@ type environmentModel struct {
 	ID          types.String `tfsdk:"id"`
 	ProjectUUID types.String `tfsdk:"project_uuid"`
 	Name        types.String `tfsdk:"name"`
-	Description types.String `tfsdk:"description"`
 }
 
 type environmentResource struct {
@@ -43,7 +42,6 @@ func (r *environmentResource) Schema(_ context.Context, _ resource.SchemaRequest
 				Required:      true,
 				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
-			"description": schema.StringAttribute{Optional: true, Computed: true},
 		},
 	}
 }
@@ -68,9 +66,6 @@ func (r *environmentResource) Create(ctx context.Context, req resource.CreateReq
 	}
 
 	body := map[string]any{"name": plan.Name.ValueString()}
-	if !plan.Description.IsNull() && !plan.Description.IsUnknown() {
-		body["description"] = plan.Description.ValueString()
-	}
 
 	var created map[string]any
 	if err := r.client.Post(ctx, fmt.Sprintf("/api/v1/projects/%s/environments", plan.ProjectUUID.ValueString()), body, &created); err != nil {
@@ -79,11 +74,6 @@ func (r *environmentResource) Create(ctx context.Context, req resource.CreateReq
 	}
 
 	plan.ID = types.StringValue(plan.ProjectUUID.ValueString() + "/" + plan.Name.ValueString())
-	if desc, ok := created["description"]; ok && desc != nil {
-		plan.Description = types.StringValue(stringFromAny(desc))
-	} else if plan.Description.IsNull() || plan.Description.IsUnknown() {
-		plan.Description = types.StringValue("")
-	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -113,9 +103,6 @@ func (r *environmentResource) Read(ctx context.Context, req resource.ReadRequest
 	out = objectPayload(out)
 	if name, ok := out["name"]; ok {
 		state.Name = types.StringValue(stringFromAny(name))
-	}
-	if desc, ok := out["description"]; ok && desc != nil {
-		state.Description = types.StringValue(stringFromAny(desc))
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

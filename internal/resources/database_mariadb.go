@@ -10,7 +10,6 @@ func NewMariaDBDatabaseResource() resource.Resource {
 		stringField("name", false, true, false),
 		stringField("mysql_user", false, true, false),
 		stringField("mysql_password", false, true, true),
-		stringField("mysql_database", false, true, false),
 		stringField("mysql_root_password", false, true, true),
 		boolField("instant_deploy", false, true, false),
 	})

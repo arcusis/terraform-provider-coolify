@@ -294,7 +294,7 @@ func (r *genericResource) writeAttrsToState(ctx context.Context, state stateTarg
 func (r *genericResource) writeAPIDataToState(ctx context.Context, state stateTarget, data map[string]any, diags *diag.Diagnostics) {
 	for _, f := range r.fields {
 		v, ok := data[f.Name]
-		if !ok {
+		if !ok || v == nil {
 			continue
 		}
 		switch f.Kind {

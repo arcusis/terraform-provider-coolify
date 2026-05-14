@@ -105,13 +105,27 @@ jobs:
                   }
               }
 
-              // Resolve team_id for the token
-              $teamId = null;
-              try { $teamId = $u->currentTeam?->id; } catch (\Throwable $_) {}
+              // Resolve the team this user actually belongs to
+              $teamId = \Illuminate\Support\Facades\DB::table('team_user')
+                  ->where('user_id', $u->id)
+                  ->value('team_id');
               if (!$teamId) {
                   $teamId = \App\Models\Team::first()?->id;
               }
               echo "Team ID for token: $teamId\n";
+
+              // Enable the Coolify API (disabled by default)
+              try {
+                  $s = \App\Models\InstanceSettings::first();
+                  if ($s) {
+                      $s->forceFill(['is_api_enabled' => true])->save();
+                      echo "API enabled via InstanceSettings\n";
+                  } else {
+                      echo "InstanceSettings not found — skipping\n";
+                  }
+              } catch (\Throwable $e3) {
+                  echo "Could not enable API: " . $e3->getMessage() . "\n";
+              }
 
               $plain = \Illuminate\Support\Str::random(40);
               $tid = \Illuminate\Support\Facades\DB::table('personal_access_tokens')->insertGetId([

@@ -773,8 +773,9 @@ jobs:
           TF_VAR_cloud_token_uuid: ""
           TF_VAR_ghost_resource_uuid: ""
         run: |
-          # Brief pause to avoid rate-limiting from the previous heavy apply
-          sleep 5
+          # Wait for Coolify's 60-req/min rate limit window to fully reset
+          # The main apply + verify steps send 100+ requests; need ~70s for window reset
+          sleep 70
           terraform plan -detailed-exitcode -no-color
           echo "No-op plan confirmed"
 

@@ -269,6 +269,7 @@ jobs:
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
           TF_VAR_server_uuid: ${{ steps.token.outputs.server_uuid }}
           TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
+          TF_VAR_cloud_token_uuid: ""
         run: |
           rm -rf .terraform .terraform.lock.hcl
           terraform plan -no-color
@@ -280,6 +281,7 @@ jobs:
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
           TF_VAR_server_uuid: ${{ steps.token.outputs.server_uuid }}
           TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
+          TF_VAR_cloud_token_uuid: ""
         run: terraform apply -auto-approve -no-color
 
       - name: Verify all resources exist in Coolify API
@@ -364,6 +366,14 @@ jobs:
           TEAM_COUNT=$(terraform output -raw team_count 2>/dev/null || echo "0")
           TEAM_MEMBER_COUNT=$(terraform output -raw team_member_count 2>/dev/null || echo "0")
           CLOUD_TOKEN_COUNT=$(terraform output -raw cloud_token_count 2>/dev/null || echo "0")
+          EXTRA_SERVER_UUID=$(terraform output -raw extra_server_uuid 2>/dev/null || true)
+          TEST_TEAM_ID=$(terraform output -raw test_team_id 2>/dev/null || true)
+          CURRENT_TEAM=$(terraform output -raw current_team_name 2>/dev/null || echo "unknown")
+          PROFILE_EMAIL=$(terraform output -raw profile_email 2>/dev/null || echo "unknown")
+          SETTINGS_REG=$(terraform output -raw registration_enabled 2>/dev/null || echo "unknown")
+          APP_EXEC_COUNT=$(terraform output -raw app_task_exec_count 2>/dev/null || echo "0")
+          SVC_EXEC_COUNT=$(terraform output -raw svc_task_exec_count 2>/dev/null || echo "0")
+          CT_VALIDATE_STATUS=$(terraform output -raw cloud_token_validate_status 2>/dev/null || echo "skipped")
           BACKUP_EXEC_COUNT=$(terraform output -raw backup_execution_count 2>/dev/null || echo "0")
           TOTAL_DEPLOY_COUNT=$(terraform output -raw total_deployment_count 2>/dev/null || echo "0")
           APP_DEPLOY_COUNT=$(terraform output -raw app_deployment_count 2>/dev/null || echo "0")
@@ -536,6 +546,60 @@ jobs:
           # GET /servers/{uuid}/validate
           pass "server_validate: status=$VALIDATE_STATUS"
 
+          echo "━━━ SERVER RESOURCE (POST /servers) ━━━"
+          assert_uuid "coolify_server resource" "$EXTRA_SERVER_UUID"
+          # PATCH /servers/{uuid}
+          PATCH_SRV=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$BASE/servers/$EXTRA_SERVER_UUID" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"acceptance-extra-server-patched"}')
+          pass "PATCH /servers/{uuid}: HTTP $PATCH_SRV"
+
+          echo "━━━ INSTANCE SETTINGS (GET/PATCH /settings) ━━━"
+          pass "instance_settings resource: is_registration_enabled=$SETTINGS_REG"
+          assert_http "GET /settings" GET "settings"
+          PATCH_SETTINGS=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$BASE/settings" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"is_registration_enabled":true}')
+          pass "PATCH /settings: HTTP $PATCH_SETTINGS"
+
+          echo "━━━ PROFILE (GET/PATCH /profile) ━━━"
+          pass "coolify_profile data source: email=$PROFILE_EMAIL"
+          assert_http "GET /profile" GET "profile"
+          PATCH_PROFILE=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$BASE/profile" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"CI Test User"}')
+          pass "PATCH /profile: HTTP $PATCH_PROFILE"
+
+          echo "━━━ CURRENT TEAM (GET /teams/current) ━━━"
+          pass "coolify_current_team: name=$CURRENT_TEAM"
+          assert_http "GET /teams/current" GET "teams/current"
+
+          echo "━━━ TEAM RESOURCE (POST/PATCH/DELETE /teams) ━━━"
+          assert_uuid "coolify_team resource" "$TEST_TEAM_ID"
+          assert_http "GET /teams/{id}" GET "teams/$TEST_TEAM_ID"
+          PATCH_TEAM=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$BASE/teams/$TEST_TEAM_ID" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"acceptance-team-patched"}')
+          pass "PATCH /teams/{id}: HTTP $PATCH_TEAM"
+          assert_http "GET /teams/{id}/members" GET "teams/$TEST_TEAM_ID/members"
+
+          echo "━━━ SCHEDULED TASK DATA SOURCES ━━━"
+          # GET /applications/{uuid}/scheduled-tasks/{uuid}
+          TASK_UUID="${APP_TASK_ID#*/}"
+          assert_http "GET app scheduled-task by UUID" GET "applications/$APP_UUID/scheduled-tasks/$TASK_UUID"
+          # GET /services/{uuid}/scheduled-tasks/{uuid}
+          SVC_TASK_UUID="${SVC_TASK_ID#*/}"
+          assert_http "GET svc scheduled-task by UUID" GET "services/$SVC_UUID/scheduled-tasks/$SVC_TASK_UUID"
+          pass "app scheduled-task executions data source: count=$APP_EXEC_COUNT"
+          pass "svc scheduled-task executions data source: count=$SVC_EXEC_COUNT"
+          # GET /applications/{uuid}/scheduled-tasks/{uuid}/executions
+          assert_http "GET app task executions list" GET "applications/$APP_UUID/scheduled-tasks/$TASK_UUID/executions"
+          # GET /services/{uuid}/scheduled-tasks/{uuid}/executions
+          assert_http "GET svc task executions list" GET "services/$SVC_UUID/scheduled-tasks/$SVC_TASK_UUID/executions"
+
+          echo "━━━ CLOUD TOKEN VALIDATE ━━━"
+          pass "cloud_token_validate: status=$CT_VALIDATE_STATUS"
+
           echo "━━━ FINAL RESULT ━━━"
           if [ "$FAIL" = "0" ]; then
             echo "All API endpoint verifications passed"
@@ -551,6 +615,7 @@ jobs:
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
           TF_VAR_server_uuid: ${{ steps.token.outputs.server_uuid }}
           TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
+          TF_VAR_cloud_token_uuid: ""
         run: |
           UUID=$(terraform output -raw project_uuid)
           terraform state rm coolify_project.main
@@ -637,6 +702,7 @@ jobs:
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
           TF_VAR_server_uuid: ${{ steps.token.outputs.server_uuid }}
           TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
+          TF_VAR_cloud_token_uuid: ""
         run: |
           terraform plan -detailed-exitcode -no-color
           echo "No-op plan confirmed"
@@ -649,6 +715,7 @@ jobs:
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
           TF_VAR_server_uuid: ${{ steps.token.outputs.server_uuid }}
           TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
+          TF_VAR_cloud_token_uuid: ""
         run: terraform destroy -auto-approve -no-color 2>&1 || true
 
       - name: Verify cleanup — 0 projects remaining

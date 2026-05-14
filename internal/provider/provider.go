@@ -138,6 +138,14 @@ func (p *CoolifyProvider) Resources(_ context.Context) []func() resource.Resourc
 		resources.NewServerHetznerResource,
 		// API settings
 		resources.NewAPISettingsResource,
+		// Instance settings & profile
+		resources.NewInstanceSettingsResource,
+		resources.NewProfileResource,
+		// Team management
+		resources.NewTeamResource,
+		resources.NewTeamMemberResource,
+		// Cloud token operations
+		resources.NewCloudTokenValidateResource,
 		// Scheduled task executions
 		resources.NewApplicationScheduledTaskExecutionResource,
 		resources.NewServiceScheduledTaskExecutionResource,
@@ -182,6 +190,16 @@ func (p *CoolifyProvider) DataSources(_ context.Context) []func() datasource.Dat
 		// Hetzner extended
 		datasources.NewHetznerImagesDataSource,
 		datasources.NewHetznerSSHKeysDataSource,
+		// Profile & settings
+		datasources.NewProfileDataSource,
+		datasources.NewInstanceSettingsDataSource,
+		// Current team
+		datasources.NewCurrentTeamDataSource,
+		// Scheduled task lookups
+		datasources.NewApplicationScheduledTaskDataSource,
+		datasources.NewServiceScheduledTaskDataSource,
+		datasources.NewApplicationScheduledTaskExecutionsDataSource,
+		datasources.NewServiceScheduledTaskExecutionsDataSource,
 	}
 }
 

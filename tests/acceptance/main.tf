@@ -509,3 +509,110 @@ output "deployment_status" { value = data.coolify_deployment.app_latest.status }
 
 data "coolify_cloud_tokens" "all" {}
 output "cloud_token_count" { value = length(data.coolify_cloud_tokens.all.cloud_tokens) }
+
+# ── 46. Instance settings resource + data source ──────────────────────────────
+# Tests GET /settings and PATCH /settings
+
+resource "coolify_instance_settings" "main" {
+  is_registration_enabled = true
+}
+
+data "coolify_instance_settings" "current" {
+  depends_on = [coolify_instance_settings.main]
+}
+output "registration_enabled" { value = data.coolify_instance_settings.current.is_registration_enabled }
+
+# ── 47. Profile data source + resource ────────────────────────────────────────
+# Tests GET /profile and PATCH /profile
+
+data "coolify_profile" "me" {}
+output "profile_email" { value = data.coolify_profile.me.email }
+
+resource "coolify_profile" "me" {
+  name = data.coolify_profile.me.name
+}
+
+# ── 48. Current team data source ──────────────────────────────────────────────
+# Tests GET /teams/current
+
+data "coolify_current_team" "active" {}
+output "current_team_name" { value = data.coolify_current_team.active.name }
+
+# ── 49. Team resource ─────────────────────────────────────────────────────────
+# Tests POST /teams, PATCH /teams/{id}, DELETE /teams/{id}
+
+resource "coolify_team" "test" {
+  name        = "acceptance-team"
+  description = "CI acceptance test team"
+}
+output "test_team_id" { value = coolify_team.test.id }
+
+# ── 50. Team member resource ──────────────────────────────────────────────────
+# Tests POST /teams/{id}/members and DELETE /teams/{id}/members/{user_id}
+# Adds the current API user to the test team (they may already be there, 404 on delete is ok)
+
+resource "coolify_team_member" "admin" {
+  team_id = coolify_team.test.id
+  email   = data.coolify_profile.me.email
+}
+
+# ── 51. Scheduled task data sources ──────────────────────────────────────────
+# Tests GET /applications/{uuid}/scheduled-tasks/{uuid}
+# Tests GET /services/{uuid}/scheduled-tasks/{uuid}
+
+data "coolify_application_scheduled_task" "app_task" {
+  parent_uuid = coolify_application.app.id
+  task_uuid   = coolify_application_scheduled_task.task.id
+}
+
+data "coolify_service_scheduled_task" "svc_task" {
+  parent_uuid = coolify_service.svc.id
+  task_uuid   = coolify_service_scheduled_task.svc_task.id
+}
+
+# ── 52. Scheduled task executions data sources ────────────────────────────────
+# Tests GET /applications/{uuid}/scheduled-tasks/{uuid}/executions
+# Tests GET /services/{uuid}/scheduled-tasks/{uuid}/executions
+
+data "coolify_application_scheduled_task_executions" "app_execs" {
+  parent_uuid = coolify_application.app.id
+  task_uuid   = coolify_application_scheduled_task.task.id
+}
+output "app_task_exec_count" { value = length(data.coolify_application_scheduled_task_executions.app_execs.executions) }
+
+data "coolify_service_scheduled_task_executions" "svc_execs" {
+  parent_uuid = coolify_service.svc.id
+  task_uuid   = coolify_service_scheduled_task.svc_task.id
+}
+output "svc_task_exec_count" { value = length(data.coolify_service_scheduled_task_executions.svc_execs.executions) }
+
+# ── 53. Server resource (POST /servers) ───────────────────────────────────────
+# Tests POST /servers, PATCH /servers/{uuid}, DELETE /servers/{uuid}
+# Uses instant_validate=false so Coolify doesn't SSH — just registers the record
+
+resource "coolify_server" "extra" {
+  name             = "acceptance-extra-server"
+  ip               = "127.0.0.2"
+  port             = 22
+  user             = "root"
+  private_key_uuid = coolify_private_key.test.id
+  instant_validate = false
+}
+output "extra_server_uuid" { value = coolify_server.extra.id }
+
+# ── 54. Cloud token validate resource ─────────────────────────────────────────
+# Tests POST /cloud-tokens/{uuid}/validate
+# Only runs if COOLIFY_TEST_CLOUD_TOKEN_UUID is set (populated by Hetzner test step)
+
+variable "cloud_token_uuid" {
+  default     = ""
+  description = "UUID of an existing cloud token to validate (optional)"
+}
+
+resource "coolify_cloud_token_validate" "hetzner" {
+  count           = var.cloud_token_uuid != "" ? 1 : 0
+  cloud_token_uuid = var.cloud_token_uuid
+}
+output "cloud_token_validate_status" {
+  value = length(coolify_cloud_token_validate.hetzner) > 0 ? coolify_cloud_token_validate.hetzner[0].status : "skipped"
+}

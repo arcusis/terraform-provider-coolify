@@ -687,6 +687,60 @@ func (d *teamsListDataSource) Read(ctx context.Context, req datasource.ReadReque
 	resp.Diagnostics.Append(resp.State.Set(ctx, &config)...)
 }
 
+// ── Current team ─────────────────────────────────────────────────────────────
+
+type currentTeamDataSourceModel struct {
+	ID          types.String `tfsdk:"id"`
+	Name        types.String `tfsdk:"name"`
+	Description types.String `tfsdk:"description"`
+}
+
+type currentTeamDataSource struct{ client *coolify.Client }
+
+func NewCurrentTeamDataSource() datasource.DataSource { return &currentTeamDataSource{} }
+
+func (d *currentTeamDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_current_team"
+}
+
+func (d *currentTeamDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		Description: "Returns the team associated with the current API token via `GET /api/v1/teams/current`. Equivalent to `coolify_team` with `name = \"Root Team\"` on most installations, but more explicit.",
+		Attributes: map[string]schema.Attribute{
+			"id":          schema.StringAttribute{Computed: true, Description: "Team ID."},
+			"name":        schema.StringAttribute{Computed: true, Description: "Team name."},
+			"description": schema.StringAttribute{Computed: true, Description: "Team description."},
+		},
+	}
+}
+
+func (d *currentTeamDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
+	}
+	if client, ok := req.ProviderData.(*coolify.Client); ok {
+		d.client = client
+	}
+}
+
+func (d *currentTeamDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var config currentTeamDataSourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	var out map[string]any
+	if err := d.client.Get(ctx, "/api/v1/teams/current", &out); err != nil {
+		resp.Diagnostics.AddError("Unable to read current Coolify team", err.Error())
+		return
+	}
+	data := objectPayload(out)
+	config.ID = types.StringValue(firstString(data, "id", "uuid"))
+	config.Name = types.StringValue(stringFromAny(data["name"]))
+	config.Description = types.StringValue(stringFromAny(data["description"]))
+	resp.Diagnostics.Append(resp.State.Set(ctx, &config)...)
+}
+
 // ── Team members ──────────────────────────────────────────────────────────────
 
 type teamMemberModel struct {

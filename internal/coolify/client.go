@@ -68,55 +68,73 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 		return err
 	}
 
-	var reader io.Reader
+	var payload []byte
 	if body != nil {
-		payload, err := json.Marshal(body)
+		payload, err = json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("encode %s %s request body: %w", method, path, err)
 		}
-		reader = bytes.NewReader(payload)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, fullURL, reader)
-	if err != nil {
-		return fmt.Errorf("create %s %s request: %w", method, path, err)
-	}
-	req.Header.Set("Accept", "application/json")
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
-	}
-
-	res, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("send %s %s request: %w", method, path, err)
-	}
-	defer res.Body.Close()
-
-	resBody, err := io.ReadAll(res.Body)
-	if err != nil {
-		return fmt.Errorf("read %s %s response: %w", method, path, err)
-	}
-
-	if res.StatusCode < 200 || res.StatusCode > 299 {
-		return &HTTPError{
-			Method:     method,
-			Path:       path,
-			StatusCode: res.StatusCode,
-			Body:       strings.TrimSpace(string(resBody)),
+	// Retry on 429 Too Many Requests with exponential back-off (max 3 attempts)
+	const maxAttempts = 3
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		var reader io.Reader
+		if payload != nil {
+			reader = bytes.NewReader(payload)
 		}
-	}
 
-	if out == nil || len(bytes.TrimSpace(resBody)) == 0 {
+		req, err := http.NewRequestWithContext(ctx, method, fullURL, reader)
+		if err != nil {
+			return fmt.Errorf("create %s %s request: %w", method, path, err)
+		}
+		req.Header.Set("Accept", "application/json")
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		if c.Token != "" {
+			req.Header.Set("Authorization", "Bearer "+c.Token)
+		}
+
+		res, err := c.HTTPClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("send %s %s request: %w", method, path, err)
+		}
+		resBody, readErr := io.ReadAll(res.Body)
+		res.Body.Close()
+		if readErr != nil {
+			return fmt.Errorf("read %s %s response: %w", method, path, readErr)
+		}
+
+		if res.StatusCode == http.StatusTooManyRequests && attempt < maxAttempts {
+			// Back off: 1s, 3s before retrying
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt*attempt) * time.Second):
+			}
+			continue
+		}
+
+		if res.StatusCode < 200 || res.StatusCode > 299 {
+			return &HTTPError{
+				Method:     method,
+				Path:       path,
+				StatusCode: res.StatusCode,
+				Body:       strings.TrimSpace(string(resBody)),
+			}
+		}
+
+		if out == nil || len(bytes.TrimSpace(resBody)) == 0 {
+			return nil
+		}
+
+		if err := json.Unmarshal(resBody, out); err != nil {
+			return fmt.Errorf("decode %s %s response: %w", method, path, err)
+		}
 		return nil
 	}
-
-	if err := json.Unmarshal(resBody, out); err != nil {
-		return fmt.Errorf("decode %s %s response: %w", method, path, err)
-	}
-	return nil
+	return fmt.Errorf("%s %s: exhausted retries after rate limiting", method, path)
 }
 
 func (c *Client) url(path string) (string, error) {

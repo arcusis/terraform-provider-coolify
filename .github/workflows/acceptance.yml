@@ -773,6 +773,8 @@ jobs:
           TF_VAR_cloud_token_uuid: ""
           TF_VAR_ghost_resource_uuid: ""
         run: |
+          # Brief pause to avoid rate-limiting from the previous heavy apply
+          sleep 5
           terraform plan -detailed-exitcode -no-color
           echo "No-op plan confirmed"
 

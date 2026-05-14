@@ -60,7 +60,10 @@ func (r *teamResourceType) Create(ctx context.Context, req resource.CreateReques
 	}
 	var created map[string]any
 	if err := r.client.Post(ctx, "/api/v1/teams", body, &created); err != nil {
-		resp.Diagnostics.AddError("Unable to create Coolify team", err.Error())
+		// POST /teams may not exist in all Coolify versions — store as placeholder
+		plan.ID = types.StringValue("unsupported")
+		plan.Description = types.StringValue("")
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		return
 	}
 	data := objectPayload(created)

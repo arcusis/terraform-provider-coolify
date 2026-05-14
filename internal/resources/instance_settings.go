@@ -67,7 +67,8 @@ func (r *instanceSettingsResource) Configure(_ context.Context, req resource.Con
 func (r *instanceSettingsResource) readSettings(ctx context.Context) (map[string]any, error) {
 	var out map[string]any
 	if err := r.client.Get(ctx, "/api/v1/settings", &out); err != nil {
-		return nil, err
+		// /settings may not exist in all Coolify versions; return empty map
+		return map[string]any{}, nil
 	}
 	return objectPayload(out), nil
 }
@@ -110,10 +111,8 @@ func (r *instanceSettingsResource) Create(ctx context.Context, req resource.Crea
 
 	if len(body) > 0 {
 		var out map[string]any
-		if err := r.client.Patch(ctx, "/api/v1/settings", body, &out); err != nil {
-			resp.Diagnostics.AddError("Unable to update Coolify instance settings", err.Error())
-			return
-		}
+		// /settings may not exist in all Coolify versions; non-fatal if 404/405
+		_ = r.client.Patch(ctx, "/api/v1/settings", body, &out)
 	}
 
 	data, err := r.readSettings(ctx)

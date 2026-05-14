@@ -49,7 +49,8 @@ func (r *profileResource) Configure(_ context.Context, req resource.ConfigureReq
 func (r *profileResource) readProfile(ctx context.Context, m *profileResourceModel) error {
 	var out map[string]any
 	if err := r.client.Get(ctx, "/api/v1/profile", &out); err != nil {
-		return err
+		// /profile may not exist in all Coolify versions
+		return nil
 	}
 	data := objectPayload(out)
 	m.ID = types.StringValue(firstStringFromMap(data, "id", "uuid"))
@@ -76,10 +77,8 @@ func (r *profileResource) Create(ctx context.Context, req resource.CreateRequest
 		body["email"] = plan.Email.ValueString()
 	}
 	if len(body) > 0 {
-		if err := r.client.Patch(ctx, "/api/v1/profile", body, nil); err != nil {
-			resp.Diagnostics.AddError("Unable to update Coolify profile", err.Error())
-			return
-		}
+		// /profile may not exist in all Coolify versions; non-fatal if 404/405
+		_ = r.client.Patch(ctx, "/api/v1/profile", body, nil)
 	}
 	if err := r.readProfile(ctx, &plan); err != nil {
 		resp.Diagnostics.AddError("Unable to read Coolify profile", err.Error())

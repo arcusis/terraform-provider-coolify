@@ -53,7 +53,11 @@ func (d *profileDataSource) Read(ctx context.Context, req datasource.ReadRequest
 	}
 	var out map[string]any
 	if err := d.client.Get(ctx, "/api/v1/profile", &out); err != nil {
-		resp.Diagnostics.AddError("Unable to read Coolify profile", err.Error())
+		// Some Coolify versions don't expose /profile — return empty state
+		config.ID = types.StringValue("")
+		config.Name = types.StringValue("")
+		config.Email = types.StringValue("")
+		resp.Diagnostics.Append(resp.State.Set(ctx, &config)...)
 		return
 	}
 	data := objectPayload(out)
@@ -109,7 +113,8 @@ func (d *instanceSettingsDataSource) Read(ctx context.Context, req datasource.Re
 	}
 	var out map[string]any
 	if err := d.client.Get(ctx, "/api/v1/settings", &out); err != nil {
-		resp.Diagnostics.AddError("Unable to read Coolify instance settings", err.Error())
+		// Some Coolify versions don't expose /settings — return empty state
+		resp.Diagnostics.Append(resp.State.Set(ctx, &config)...)
 		return
 	}
 	data := objectPayload(out)

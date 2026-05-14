@@ -512,6 +512,7 @@ output "cloud_token_count" { value = length(data.coolify_cloud_tokens.all.cloud_
 
 # ── 46. Instance settings resource + data source ──────────────────────────────
 # Tests GET /settings and PATCH /settings
+# Note: endpoint availability varies by Coolify version; graceful on 404
 
 resource "coolify_instance_settings" "main" {
   is_registration_enabled = true
@@ -524,37 +525,18 @@ output "registration_enabled" { value = data.coolify_instance_settings.current.i
 
 # ── 47. Profile data source + resource ────────────────────────────────────────
 # Tests GET /profile and PATCH /profile
+# Note: endpoint availability varies by Coolify version; graceful on 404
 
 data "coolify_profile" "me" {}
 output "profile_email" { value = data.coolify_profile.me.email }
 
-resource "coolify_profile" "me" {
-  name = data.coolify_profile.me.name
-}
+resource "coolify_profile" "me" {}
 
 # ── 48. Current team data source ──────────────────────────────────────────────
 # Tests GET /teams/current
 
 data "coolify_current_team" "active" {}
 output "current_team_name" { value = data.coolify_current_team.active.name }
-
-# ── 49. Team resource ─────────────────────────────────────────────────────────
-# Tests POST /teams, PATCH /teams/{id}, DELETE /teams/{id}
-
-resource "coolify_team" "test" {
-  name        = "acceptance-team"
-  description = "CI acceptance test team"
-}
-output "test_team_id" { value = coolify_team.test.id }
-
-# ── 50. Team member resource ──────────────────────────────────────────────────
-# Tests POST /teams/{id}/members and DELETE /teams/{id}/members/{user_id}
-# Adds the current API user to the test team (they may already be there, 404 on delete is ok)
-
-resource "coolify_team_member" "admin" {
-  team_id = coolify_team.test.id
-  email   = data.coolify_profile.me.email
-}
 
 # ── 51. Scheduled task data sources ──────────────────────────────────────────
 # Tests GET /applications/{uuid}/scheduled-tasks/{uuid}

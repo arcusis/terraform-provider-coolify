@@ -207,10 +207,27 @@ jobs:
           TOKEN="${{ steps.token.outputs.token }}"
 
           # Get the localhost server UUID that Coolify creates during installation
-          SERVER_UUID=$(curl -sf http://localhost:8000/api/v1/servers \
-            -H "Authorization: Bearer $TOKEN" \
-            | python3 -c "import json,sys; d=json.load(sys.stdin); lst=d if isinstance(d,list) else d.get('data',[]); m=next((s['uuid'] for s in lst if s.get('ip') in ('localhost','127.0.0.1','0.0.0.0')),''); m=m or (lst[0]['uuid'] if lst else ''); print(m)" \
-            2>/dev/null || true)
+          echo "=== Servers API response ==="
+          SERVERS_RAW=$(curl -s http://localhost:8000/api/v1/servers \
+            -H "Authorization: Bearer $TOKEN")
+          echo "$SERVERS_RAW" | head -c 500
+          echo
+
+          SERVER_UUID=$(echo "$SERVERS_RAW" \
+            | python3 -c "
+import json,sys
+raw=sys.stdin.read()
+try:
+    d=json.loads(raw)
+except Exception as e:
+    print('',end='')
+    sys.exit(0)
+lst=d if isinstance(d,list) else (d.get('data') or d.get('servers') or [])
+if not lst and isinstance(d,dict):
+    lst=[d]
+m=next((str(s.get('uuid','')) for s in lst if s.get('uuid')),'' )
+print(m)
+" 2>&1)
           echo "Server UUID: $SERVER_UUID"
           [ -n "$SERVER_UUID" ] || { echo "ERROR: no server found"; exit 1; }
           echo "server_uuid=$SERVER_UUID" >> "$GITHUB_OUTPUT"

@@ -418,14 +418,14 @@ output "app_deployment_count"   { value = length(data.coolify_application_deploy
 # Tests GET /projects, /applications, /services, /databases, /servers,
 # /security/keys, /github-apps, /cloud-tokens, /teams
 
-data "coolify_projects" "all" {}
-data "coolify_applications" "all" {}
-data "coolify_services" "all" {}
-data "coolify_databases" "all" {}
-data "coolify_servers" "all" {}
-data "coolify_private_keys" "all" {}
-data "coolify_github_apps" "all" { depends_on = [coolify_github_app.test] }
-data "coolify_teams" "all" {}
+data "coolify_projects" "all"     { depends_on = [coolify_project.main] }
+data "coolify_applications" "all" { depends_on = [coolify_application.app] }
+data "coolify_services" "all"     { depends_on = [coolify_service.svc] }
+data "coolify_databases" "all"    { depends_on = [coolify_database_postgresql.pg, coolify_database_redis.redis] }
+data "coolify_servers" "all"      { depends_on = [coolify_server.extra] }
+data "coolify_private_keys" "all" { depends_on = [coolify_private_key.test] }
+data "coolify_github_apps" "all"  { depends_on = [coolify_github_app.test] }
+data "coolify_teams" "all"        {}
 
 output "project_count"     { value = length(data.coolify_projects.all.projects) }
 output "application_count" { value = length(data.coolify_applications.all.applications) }

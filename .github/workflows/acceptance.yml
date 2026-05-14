@@ -209,15 +209,8 @@ jobs:
           # Get the localhost server UUID that Coolify creates during installation
           SERVER_UUID=$(curl -sf http://localhost:8000/api/v1/servers \
             -H "Authorization: Bearer $TOKEN" \
-            | python3 -c "
-import json, sys
-servers = json.load(sys.stdin)
-lst = servers if isinstance(servers, list) else servers.get('data', [])
-match = next((s['uuid'] for s in lst if s.get('ip') in ('localhost', '127.0.0.1', '0.0.0.0')), '')
-if not match and lst:
-    match = lst[0]['uuid']
-print(match)
-" 2>/dev/null || true)
+            | python3 -c "import json,sys; d=json.load(sys.stdin); lst=d if isinstance(d,list) else d.get('data',[]); m=next((s['uuid'] for s in lst if s.get('ip') in ('localhost','127.0.0.1','0.0.0.0')),''); m=m or (lst[0]['uuid'] if lst else ''); print(m)" \
+            2>/dev/null || true)
           echo "Server UUID: $SERVER_UUID"
           [ -n "$SERVER_UUID" ] || { echo "ERROR: no server found"; exit 1; }
           echo "server_uuid=$SERVER_UUID" >> "$GITHUB_OUTPUT"

@@ -258,6 +258,10 @@ jobs:
           echo "Server UUID from token step: ${{ steps.token.outputs.server_uuid }}"
 
       # ── Terraform tests (all resources + data sources) ────────────────────────
+      - name: Terraform Init
+        working-directory: tests/acceptance
+        run: terraform init -upgrade
+
       - name: Terraform Plan
         working-directory: tests/acceptance
         env:

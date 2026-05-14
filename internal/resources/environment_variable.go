@@ -12,6 +12,17 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
+type envVarModel struct {
+	ID              types.String `tfsdk:"id"`
+	ApplicationUUID types.String `tfsdk:"application_uuid"`
+	Key             types.String `tfsdk:"key"`
+	Value           types.String `tfsdk:"value"`
+	IsPreview       types.Bool   `tfsdk:"is_preview"`
+	IsLiteral       types.Bool   `tfsdk:"is_literal"`
+	IsMultiline     types.Bool   `tfsdk:"is_multiline"`
+	IsShownOnce     types.Bool   `tfsdk:"is_shown_once"`
+}
+
 type environmentVariableResource struct {
 	client *coolify.Client
 }
@@ -27,43 +38,14 @@ func (r *environmentVariableResource) Metadata(_ context.Context, req resource.M
 func (r *environmentVariableResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
-			"id": schema.StringAttribute{
-				Computed:    true,
-				Description: "Coolify environment variable UUID.",
-			},
-			"application_uuid": schema.StringAttribute{
-				Required:    true,
-				Description: "Coolify application UUID.",
-			},
-			"key": schema.StringAttribute{
-				Required:    true,
-				Description: "Environment variable key.",
-			},
-			"value": schema.StringAttribute{
-				Required:    true,
-				Sensitive:   true,
-				Description: "Environment variable value.",
-			},
-			"is_preview": schema.BoolAttribute{
-				Optional:    true,
-				Computed:    true,
-				Description: "Whether this environment variable applies to preview deployments.",
-			},
-			"is_literal": schema.BoolAttribute{
-				Optional:    true,
-				Computed:    true,
-				Description: "Whether this environment variable is literal.",
-			},
-			"is_multiline": schema.BoolAttribute{
-				Optional:    true,
-				Computed:    true,
-				Description: "Whether this environment variable is multiline.",
-			},
-			"is_shown_once": schema.BoolAttribute{
-				Optional:    true,
-				Computed:    true,
-				Description: "Whether this environment variable is shown once.",
-			},
+			"id":               schema.StringAttribute{Computed: true},
+			"application_uuid": schema.StringAttribute{Required: true},
+			"key":              schema.StringAttribute{Required: true},
+			"value":            schema.StringAttribute{Required: true, Sensitive: true},
+			"is_preview":       schema.BoolAttribute{Optional: true, Computed: true},
+			"is_literal":       schema.BoolAttribute{Optional: true, Computed: true},
+			"is_multiline":     schema.BoolAttribute{Optional: true, Computed: true},
+			"is_shown_once":    schema.BoolAttribute{Optional: true, Computed: true},
 		},
 	}
 }
@@ -74,56 +56,50 @@ func (r *environmentVariableResource) Configure(_ context.Context, req resource.
 	}
 	client, ok := req.ProviderData.(*coolify.Client)
 	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", "Expected *coolify.Client from provider configuration.")
+		resp.Diagnostics.AddError("Unexpected provider data", "Expected *coolify.Client.")
 		return
 	}
 	r.client = client
 }
 
 func (r *environmentVariableResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan resourceModel
+	var plan envVarModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	var patched map[string]any
-	if err := r.client.Patch(ctx, envsPath(plan.ApplicationUUID.ValueString()), r.body(plan), &patched); err != nil {
+	if err := r.client.Patch(ctx, envsPath(plan.ApplicationUUID.ValueString()), envVarBody(plan), &patched); err != nil {
 		resp.Diagnostics.AddError("Unable to create Coolify environment variable", err.Error())
 		return
 	}
 
-	id := firstString(patched, "uuid", "id")
+	id := firstStringFromMap(patched, "uuid", "id")
 	if id == "" {
 		found, err := r.find(ctx, plan.ApplicationUUID.ValueString(), "", plan.Key.ValueString())
 		if err != nil {
-			resp.Diagnostics.AddError("Unable to read Coolify environment variable after create", err.Error())
+			resp.Diagnostics.AddError("Unable to read env var after create", err.Error())
 			return
 		}
-		id = firstString(found, "uuid", "id")
-		applyEnvironmentVariable(&plan, found)
+		id = firstStringFromMap(found, "uuid", "id")
+		applyEnvVarData(&plan, found)
 	}
 	if id == "" {
 		id = plan.Key.ValueString()
 	}
 	plan.ID = types.StringValue(id)
-
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func (r *environmentVariableResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var state resourceModel
+	var state envVarModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	appUUID := state.ApplicationUUID.ValueString()
-	if appUUID == "" {
-		resp.Diagnostics.AddError("Missing application UUID", "Cannot read Coolify environment variable because application_uuid is empty.")
-		return
-	}
-	found, err := r.find(ctx, appUUID, state.ID.ValueString(), state.Key.ValueString())
+	found, err := r.find(ctx, state.ApplicationUUID.ValueString(), state.ID.ValueString(), state.Key.ValueString())
 	if err != nil {
 		if httpErr, ok := err.(*coolify.HTTPError); ok && httpErr.StatusCode == http.StatusNotFound {
 			resp.State.RemoveResource(ctx)
@@ -136,55 +112,52 @@ func (r *environmentVariableResource) Read(ctx context.Context, req resource.Rea
 		resp.State.RemoveResource(ctx)
 		return
 	}
-
-	applyEnvironmentVariable(&state, found)
-	if id := firstString(found, "uuid", "id"); id != "" {
+	applyEnvVarData(&state, found)
+	if id := firstStringFromMap(found, "uuid", "id"); id != "" {
 		state.ID = types.StringValue(id)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *environmentVariableResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan resourceModel
-	var state resourceModel
+	var plan envVarModel
+	var state envVarModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if err := r.client.Patch(ctx, envsPath(plan.ApplicationUUID.ValueString()), r.body(plan), nil); err != nil {
+	if err := r.client.Patch(ctx, envsPath(plan.ApplicationUUID.ValueString()), envVarBody(plan), nil); err != nil {
 		resp.Diagnostics.AddError("Unable to update Coolify environment variable", err.Error())
 		return
 	}
-	if plan.ID.IsNull() || plan.ID.IsUnknown() || plan.ID.ValueString() == "" {
+	if plan.ID.IsNull() || plan.ID.ValueString() == "" {
 		plan.ID = state.ID
 	}
 	found, err := r.find(ctx, plan.ApplicationUUID.ValueString(), plan.ID.ValueString(), plan.Key.ValueString())
 	if err != nil {
-		resp.Diagnostics.AddError("Unable to read Coolify environment variable after update", err.Error())
+		resp.Diagnostics.AddError("Unable to read env var after update", err.Error())
 		return
 	}
-	applyEnvironmentVariable(&plan, found)
-	if id := firstString(found, "uuid", "id"); id != "" {
+	applyEnvVarData(&plan, found)
+	if id := firstStringFromMap(found, "uuid", "id"); id != "" {
 		plan.ID = types.StringValue(id)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func (r *environmentVariableResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var state resourceModel
+	var state envVarModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-
-	appUUID := state.ApplicationUUID.ValueString()
-	envUUID := state.ID.ValueString()
-	if appUUID == "" || envUUID == "" {
+	if state.ApplicationUUID.ValueString() == "" || state.ID.ValueString() == "" {
 		return
 	}
-	if err := r.client.Delete(ctx, fmt.Sprintf("/api/v1/applications/%s/envs/%s", appUUID, envUUID), nil); err != nil {
+	if err := r.client.Delete(ctx, fmt.Sprintf("/api/v1/applications/%s/envs/%s",
+		state.ApplicationUUID.ValueString(), state.ID.ValueString()), nil); err != nil {
 		if httpErr, ok := err.(*coolify.HTTPError); ok && httpErr.StatusCode == http.StatusNotFound {
 			return
 		}
@@ -196,23 +169,13 @@ func (r *environmentVariableResource) ImportState(ctx context.Context, req resou
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-func (r *environmentVariableResource) body(model resourceModel) map[string]any {
-	body := make(map[string]any)
-	for _, name := range []string{"key", "value", "is_preview", "is_literal", "is_multiline", "is_shown_once"} {
-		if value, ok := modelFieldValue(model, name); ok {
-			body[name] = value
-		}
-	}
-	return body
-}
-
 func (r *environmentVariableResource) find(ctx context.Context, appUUID, envUUID, key string) (map[string]any, error) {
 	var out any
 	if err := r.client.Get(ctx, envsPath(appUUID), &out); err != nil {
 		return nil, err
 	}
 	for _, item := range envList(out) {
-		if envUUID != "" && (firstString(item, "uuid", "id") == envUUID) {
+		if envUUID != "" && firstStringFromMap(item, "uuid", "id") == envUUID {
 			return item, nil
 		}
 		if key != "" && stringFromAny(item["key"]) == key {
@@ -222,6 +185,47 @@ func (r *environmentVariableResource) find(ctx context.Context, appUUID, envUUID
 	return map[string]any{}, nil
 }
 
+func envVarBody(m envVarModel) map[string]any {
+	body := map[string]any{
+		"key":   m.Key.ValueString(),
+		"value": m.Value.ValueString(),
+	}
+	if !m.IsPreview.IsNull() && !m.IsPreview.IsUnknown() {
+		body["is_preview"] = m.IsPreview.ValueBool()
+	}
+	if !m.IsLiteral.IsNull() && !m.IsLiteral.IsUnknown() {
+		body["is_literal"] = m.IsLiteral.ValueBool()
+	}
+	if !m.IsMultiline.IsNull() && !m.IsMultiline.IsUnknown() {
+		body["is_multiline"] = m.IsMultiline.ValueBool()
+	}
+	if !m.IsShownOnce.IsNull() && !m.IsShownOnce.IsUnknown() {
+		body["is_shown_once"] = m.IsShownOnce.ValueBool()
+	}
+	return body
+}
+
+func applyEnvVarData(m *envVarModel, data map[string]any) {
+	if v, ok := data["key"]; ok {
+		m.Key = types.StringValue(stringFromAny(v))
+	}
+	if v, ok := data["value"]; ok {
+		m.Value = types.StringValue(stringFromAny(v))
+	}
+	if v, ok := data["is_preview"]; ok {
+		m.IsPreview = types.BoolValue(boolFromAny(v))
+	}
+	if v, ok := data["is_literal"]; ok {
+		m.IsLiteral = types.BoolValue(boolFromAny(v))
+	}
+	if v, ok := data["is_multiline"]; ok {
+		m.IsMultiline = types.BoolValue(boolFromAny(v))
+	}
+	if v, ok := data["is_shown_once"]; ok {
+		m.IsShownOnce = types.BoolValue(boolFromAny(v))
+	}
+}
+
 func envsPath(appUUID string) string {
 	return fmt.Sprintf("/api/v1/applications/%s/envs", appUUID)
 }
@@ -229,16 +233,12 @@ func envsPath(appUUID string) string {
 func envList(out any) []map[string]any {
 	switch v := out.(type) {
 	case []any:
-		return mapList(v)
+		return mapListEnv(v)
 	case map[string]any:
-		if data, ok := v["data"].([]any); ok {
-			return mapList(data)
-		}
-		if envs, ok := v["envs"].([]any); ok {
-			return mapList(envs)
-		}
-		if envs, ok := v["environment_variables"].([]any); ok {
-			return mapList(envs)
+		for _, key := range []string{"data", "envs", "environment_variables"} {
+			if arr, ok := v[key].([]any); ok {
+				return mapListEnv(arr)
+			}
 		}
 		return []map[string]any{objectPayload(v)}
 	default:
@@ -246,20 +246,12 @@ func envList(out any) []map[string]any {
 	}
 }
 
-func mapList(items []any) []map[string]any {
+func mapListEnv(items []any) []map[string]any {
 	result := make([]map[string]any, 0, len(items))
 	for _, item := range items {
-		if mapped, ok := item.(map[string]any); ok {
-			result = append(result, mapped)
+		if m, ok := item.(map[string]any); ok {
+			result = append(result, m)
 		}
 	}
 	return result
-}
-
-func applyEnvironmentVariable(model *resourceModel, data map[string]any) {
-	for _, name := range []string{"application_uuid", "key", "value", "is_preview", "is_literal", "is_multiline", "is_shown_once"} {
-		if value, ok := data[name]; ok {
-			setModelField(model, name, value)
-		}
-	}
 }

@@ -1,0 +1,202 @@
+name: Acceptance Tests
+
+on:
+  pull_request:
+    branches: [Production]
+  push:
+    branches: [Production]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  acceptance:
+    name: Provider acceptance tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build provider binary
+        run: go build -o terraform-provider-coolify .
+
+      - name: Configure Terraform dev override
+        run: |
+          cat > ~/.terraformrc <<EOF
+          provider_installation {
+            dev_overrides { "arcusis/coolify" = "$PWD" }
+            direct {}
+          }
+          EOF
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.10"
+
+      # ── Launch Coolify ────────────────────────────────────────────────────────
+      - name: Download Coolify compose files
+        run: |
+          mkdir -p /data/coolify/source
+          curl -fsSL https://cdn.coollabs.io/coolify/docker-compose.yml \
+            -o /data/coolify/source/docker-compose.yml
+          curl -fsSL https://cdn.coollabs.io/coolify/docker-compose.prod.yml \
+            -o /data/coolify/source/docker-compose.prod.yml
+
+      - name: Write Coolify .env
+        run: |
+          APP_KEY="base64:$(openssl rand -base64 32)"
+          cat > /data/coolify/source/.env <<EOF
+          APP_ID=ci-test-$(openssl rand -hex 8)
+          APP_KEY=$APP_KEY
+          APP_URL=http://localhost:8000
+          APP_ENV=production
+          DB_CONNECTION=pgsql
+          DB_HOST=coolify-db
+          DB_PORT=5432
+          DB_DATABASE=coolify
+          DB_USERNAME=coolify
+          DB_PASSWORD=ci_password
+          REDIS_HOST=coolify-redis
+          QUEUE_CONNECTION=sync
+          PUSHER_HOST=localhost
+          PUSHER_PORT=6001
+          ROOT_USER_EMAIL=ci@test.example.com
+          ROOT_USER_PASSWORD=CItest1!Password
+          EOF
+
+      - name: Start Coolify
+        run: |
+          cd /data/coolify/source
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+          echo "Waiting for Coolify to be healthy (up to 3 min)..."
+          timeout 180 bash -c '
+            until curl -sf http://localhost:8000 -o /dev/null 2>&1; do
+              sleep 3; echo -n "."
+            done'
+          echo " up"
+          sleep 15   # let DB migrations and user creation finish
+
+      - name: Get API token
+        id: token
+        run: |
+          CONTAINER=$(docker ps --filter "name=coolify$" --format "{{.ID}}" | head -1)
+          echo "Coolify container: $CONTAINER"
+
+          TOKEN=$(docker exec "$CONTAINER" php artisan tinker \
+            --execute="\$u=App\Models\User::first(); if(\$u) echo \$u->createToken('ci')->plainTextToken;" \
+            2>/dev/null | grep -E '^[0-9]+\|' | tail -1)
+
+          if [ -z "$TOKEN" ]; then
+            echo "artisan createToken failed, trying direct SQL..."
+            PLAIN=$(openssl rand -hex 20)
+            HASH=$(printf '%s' "$PLAIN" | sha256sum | cut -d' ' -f1)
+            TEAM_ID=$(docker exec "$CONTAINER" php artisan tinker \
+              --execute="\$t=App\Models\Team::first(); if(\$t) echo \$t->id;" \
+              2>/dev/null | grep -E '^[0-9]+$' | tail -1)
+            TOKEN_ID=$(docker exec "$CONTAINER" php artisan tinker \
+              --execute="echo DB::table('personal_access_tokens')->insertGetId([
+                'tokenable_type'=>'App\\\Models\\\User',
+                'tokenable_id'=>App\\\Models\\\User::first()->id,
+                'name'=>'ci',
+                'token'=>'$HASH',
+                'team_id'=>'$TEAM_ID',
+                'abilities'=>'[\"*\"]',
+                'created_at'=>now(),
+                'updated_at'=>now(),
+              ]);" 2>/dev/null | grep -E '^[0-9]+$' | tail -1)
+            TOKEN="${TOKEN_ID}|${PLAIN}"
+          fi
+
+          echo "Token obtained: $([ -n "$TOKEN" ] && echo YES || echo NO)"
+          [ -n "$TOKEN" ] || (echo "ERROR: Could not get token" && exit 1)
+
+          # Verify token works
+          curl -sf http://localhost:8000/api/v1/projects \
+            -H "Authorization: Bearer $TOKEN" -w " HTTP:%{http_code}" && echo
+
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+
+      # ── Terraform tests ───────────────────────────────────────────────────────
+      - name: Terraform Init (validate config only)
+        working-directory: tests/acceptance
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: tests/acceptance
+        env:
+          TF_VAR_coolify_endpoint: http://localhost:8000
+          TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
+        run: terraform plan -no-color
+
+      - name: Terraform Apply
+        working-directory: tests/acceptance
+        env:
+          TF_VAR_coolify_endpoint: http://localhost:8000
+          TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
+        run: terraform apply -auto-approve -no-color
+
+      - name: Verify outputs and API state
+        working-directory: tests/acceptance
+        env:
+          TF_VAR_coolify_endpoint: http://localhost:8000
+          TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
+        run: |
+          UUID=$(terraform output -raw project_uuid)
+          echo "Project UUID: $UUID"
+          [ -n "$UUID" ] || (echo "FAIL: empty project_uuid" && exit 1)
+
+          # Verify via API
+          NAME=$(curl -sf http://localhost:8000/api/v1/projects/$UUID \
+            -H "Authorization: Bearer ${{ steps.token.outputs.token }}" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['name'])")
+          echo "Project name in Coolify: $NAME"
+          [ "$NAME" = "acceptance-test-project" ] || (echo "FAIL: name mismatch" && exit 1)
+
+      - name: Terraform Import test
+        working-directory: tests/acceptance
+        env:
+          TF_VAR_coolify_endpoint: http://localhost:8000
+          TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
+        run: |
+          UUID=$(terraform output -raw project_uuid)
+          terraform state rm coolify_project.test
+          terraform import coolify_project.test "$UUID"
+          echo "Import: OK"
+
+      - name: Terraform Plan after import (expect no changes)
+        working-directory: tests/acceptance
+        env:
+          TF_VAR_coolify_endpoint: http://localhost:8000
+          TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
+        run: |
+          terraform plan -detailed-exitcode -no-color
+          echo "No-op plan: OK"
+
+      - name: Terraform Destroy
+        if: always()
+        working-directory: tests/acceptance
+        env:
+          TF_VAR_coolify_endpoint: http://localhost:8000
+          TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
+        run: terraform destroy -auto-approve -no-color || true
+
+      - name: Verify cleanup
+        if: always()
+        run: |
+          TOKEN="${{ steps.token.outputs.token }}"
+          COUNT=$(curl -sf http://localhost:8000/api/v1/projects \
+            -H "Authorization: Bearer $TOKEN" \
+            | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "?")
+          echo "Projects remaining after destroy: $COUNT"
+          [ "$COUNT" = "0" ] || [ "$COUNT" = "?" ] || (echo "FAIL: resources not cleaned up" && exit 1)
+
+      - name: Stop Coolify
+        if: always()
+        run: |
+          cd /data/coolify/source 2>/dev/null && \
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml down -v 2>/dev/null || true

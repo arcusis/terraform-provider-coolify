@@ -7,21 +7,25 @@ import (
 )
 
 func NewApplicationResource() resource.Resource {
-	app := &genericResource{
+	return &genericResource{
 		typeName:    "application",
 		displayName: "application",
-		createPath: func(model resourceModel) string {
-			return fmt.Sprintf("/api/v1/applications/%s", model.Type.ValueString())
+		createPath: func(vals map[string]string) string {
+			appType := vals["type"]
+			if appType == "" {
+				appType = "public"
+			}
+			return fmt.Sprintf("/api/v1/applications/%s", appType)
 		},
 		readPath:   func(id string) string { return fmt.Sprintf("/api/v1/applications/%s", id) },
 		updatePath: func(id string) string { return fmt.Sprintf("/api/v1/applications/%s", id) },
 		deletePath: func(id string) string { return fmt.Sprintf("/api/v1/applications/%s", id) },
-		fields: normalizeFields([]resourceField{
-			noSendStringField("type", true),
+		fields: []resourceField{
+			stringField("type", true, false, false),
 			stringField("project_uuid", true, false, false),
 			stringField("server_uuid", true, false, false),
 			stringField("environment_name", true, false, false),
-			stringField("ports_exposes", true, false, false),
+			stringField("ports_exposes", false, true, false),
 			stringField("git_repository", false, true, false),
 			stringField("git_branch", false, true, false),
 			stringField("build_pack", false, true, false),
@@ -37,7 +41,7 @@ func NewApplicationResource() resource.Resource {
 			stringField("start_command", false, true, false),
 			boolField("is_auto_deploy_enabled", false, true, false),
 			boolField("is_force_https_enabled", false, true, false),
-		}),
+			boolField("instant_deploy", false, true, false),
+		},
 	}
-	return app
 }

@@ -127,6 +127,7 @@ jobs:
                   echo "Could not enable API: " . $e3->getMessage() . "\n";
               }
 
+              // Create API token
               $plain = \Illuminate\Support\Str::random(40);
               $tid = \Illuminate\Support\Facades\DB::table('personal_access_tokens')->insertGetId([
                   'tokenable_type' => 'App\\Models\\User',
@@ -139,6 +140,53 @@ jobs:
                   'updated_at'     => now(),
               ]);
               echo "TOKEN:{$tid}|{$plain}\n";
+
+              // Create PrivateKey + Server so resource tests have a valid server_uuid
+              try {
+                  // Reuse any existing private key, or create one from Coolify's generated key
+                  $pk = \App\Models\PrivateKey::where('team_id', $teamId)->first();
+                  if (!$pk) {
+                      $keyContent = '';
+                      foreach (['/data/coolify/ssh/keys/id.root@host.docker.internal',
+                                '/root/.ssh/id_rsa', '/root/.ssh/id_ed25519'] as $path) {
+                          if (file_exists($path)) {
+                              $keyContent = file_get_contents($path);
+                              break;
+                          }
+                      }
+                      $pk = \App\Models\PrivateKey::create([
+                          'name'        => 'CI Key',
+                          'description' => 'Auto-created for CI',
+                          'private_key' => $keyContent ?: '# placeholder',
+                          'team_id'     => $teamId,
+                          'is_git_related' => false,
+                      ]);
+                      echo "Created private key id={$pk->id} uuid={$pk->uuid}\n";
+                  } else {
+                      echo "Reusing private key id={$pk->id} uuid={$pk->uuid}\n";
+                  }
+
+                  $srv = \App\Models\Server::where('team_id', $teamId)->first();
+                  if (!$srv) {
+                      $srv = \App\Models\Server::create([
+                          'name'            => 'Localhost',
+                          'description'     => 'CI host',
+                          'ip'              => 'localhost',
+                          'port'            => 22,
+                          'user'            => 'root',
+                          'private_key_id'  => $pk->id,
+                          'team_id'         => $teamId,
+                          'proxy_type'      => 'caddy',
+                          'is_build_server' => false,
+                      ]);
+                      echo "Created server id={$srv->id} uuid={$srv->uuid}\n";
+                  } else {
+                      echo "Reusing server id={$srv->id} uuid={$srv->uuid}\n";
+                  }
+                  echo "SERVER_UUID:{$srv->uuid}\n";
+              } catch (\Throwable $e4) {
+                  echo "Server creation error: " . $e4->getMessage() . "\n";
+              }
           } catch (\Throwable $e) {
               echo "ERROR: " . $e->getMessage() . "\n";
               echo "  at " . $e->getFile() . ":" . $e->getLine() . "\n";
@@ -156,13 +204,16 @@ jobs:
           cat /tmp/setup.log
 
           TOKEN=$(grep '^TOKEN:' /tmp/setup.log | sed 's/^TOKEN://' | tail -1)
+          SERVER_UUID=$(grep '^SERVER_UUID:' /tmp/setup.log | sed 's/^SERVER_UUID://' | tail -1)
 
           echo "Token obtained: $([ -n "$TOKEN" ] && echo YES || echo NO)"
+          echo "Server UUID: $SERVER_UUID"
           [ -n "$TOKEN" ] || {
             echo "=== Laravel log ==="
             docker exec "$CONTAINER" tail -50 /var/www/html/storage/logs/laravel.log 2>/dev/null || true
             exit 1
           }
+          [ -n "$SERVER_UUID" ] || echo "WARNING: no server UUID (server creation may have failed)"
 
           # Smoke test: GET then POST — both must succeed
           echo "=== Smoke test GET ==="
@@ -199,45 +250,18 @@ jobs:
 
           echo "::add-mask::$TOKEN"
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
-
-      # ── Resolve test prerequisites ────────────────────────────────────────────
-      - name: Resolve server UUID and generate test key
-        id: prereqs
-        run: |
-          TOKEN="${{ steps.token.outputs.token }}"
-
-          # Get the localhost server UUID that Coolify creates during installation
-          echo "=== Servers API response ==="
-          SERVERS_RAW=$(curl -s http://localhost:8000/api/v1/servers \
-            -H "Authorization: Bearer $TOKEN")
-          echo "$SERVERS_RAW" | head -c 500
-          echo
-
-          cat > /tmp/get_server_uuid.py <<'PYEOF'
-          import json, sys
-          raw = sys.stdin.read()
-          try:
-              d = json.loads(raw)
-          except Exception:
-              sys.exit(0)
-          lst = d if isinstance(d, list) else (d.get('data') or d.get('servers') or [])
-          if not lst and isinstance(d, dict):
-              lst = [d]
-          m = next((str(s.get('uuid', '')) for s in lst if s.get('uuid')), '')
-          print(m)
-          PYEOF
-
-          SERVER_UUID=$(echo "$SERVERS_RAW" | python3 /tmp/get_server_uuid.py 2>&1)
-          echo "Server UUID: $SERVER_UUID"
-          [ -n "$SERVER_UUID" ] || { echo "ERROR: no server found"; exit 1; }
           echo "server_uuid=$SERVER_UUID" >> "$GITHUB_OUTPUT"
 
-          # Generate a fresh RSA key for the private key resource test
+      # ── Generate test SSH key ─────────────────────────────────────────────────
+      - name: Generate test SSH key
+        id: prereqs
+        run: |
           ssh-keygen -t rsa -b 2048 -f /tmp/tf_test_key -N "" -q
           echo "test_private_key<<KEYEOF" >> "$GITHUB_OUTPUT"
           cat /tmp/tf_test_key >> "$GITHUB_OUTPUT"
           echo "KEYEOF" >> "$GITHUB_OUTPUT"
           echo "::add-mask::$(cat /tmp/tf_test_key.pub)"
+          echo "Server UUID from token step: ${{ steps.token.outputs.server_uuid }}"
 
       # ── Terraform tests (all resources + data sources) ────────────────────────
       - name: Terraform Plan
@@ -245,7 +269,7 @@ jobs:
         env:
           TF_VAR_coolify_endpoint: http://localhost:8000
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
-          TF_VAR_server_uuid: ${{ steps.prereqs.outputs.server_uuid }}
+          TF_VAR_server_uuid: ${{ steps.token.outputs.server_uuid }}
           TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
         run: terraform plan -no-color
 
@@ -254,7 +278,7 @@ jobs:
         env:
           TF_VAR_coolify_endpoint: http://localhost:8000
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
-          TF_VAR_server_uuid: ${{ steps.prereqs.outputs.server_uuid }}
+          TF_VAR_server_uuid: ${{ steps.token.outputs.server_uuid }}
           TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
         run: terraform apply -auto-approve -no-color
 
@@ -319,7 +343,7 @@ jobs:
         env:
           TF_VAR_coolify_endpoint: http://localhost:8000
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
-          TF_VAR_server_uuid: ${{ steps.prereqs.outputs.server_uuid }}
+          TF_VAR_server_uuid: ${{ steps.token.outputs.server_uuid }}
           TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
         run: |
           UUID=$(terraform output -raw project_uuid)
@@ -331,7 +355,7 @@ jobs:
         env:
           TF_VAR_coolify_endpoint: http://localhost:8000
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
-          TF_VAR_server_uuid: ${{ steps.prereqs.outputs.server_uuid }}
+          TF_VAR_server_uuid: ${{ steps.token.outputs.server_uuid }}
           TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
         run: |
           terraform plan -detailed-exitcode -no-color
@@ -343,7 +367,7 @@ jobs:
         env:
           TF_VAR_coolify_endpoint: http://localhost:8000
           TF_VAR_coolify_token: ${{ steps.token.outputs.token }}
-          TF_VAR_server_uuid: ${{ steps.prereqs.outputs.server_uuid }}
+          TF_VAR_server_uuid: ${{ steps.token.outputs.server_uuid }}
           TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
         run: terraform destroy -auto-approve -no-color || true
 

@@ -88,12 +88,12 @@ jobs:
             # createToken fails if no current team context, so we insert the token directly
             docker exec "$CONTAINER" php artisan tinker \
               --execute='
-                $u = App\Models\User::forceCreate([
+                $u = App\Models\User::create([
                   "name"=>"admin","email"=>"ci@test.example.com",
                   "password"=>Hash::make("CItest1!Password"),
                   "email_verified_at"=>now()
                 ]);
-                $t = App\Models\Team::forceCreate(["name"=>"Root Team","personal_team"=>true]);
+                $t = App\Models\Team::create(["name"=>"Root Team","personal_team"=>true]);
                 DB::table("team_user")->insert(["team_id"=>$t->id,"user_id"=>$u->id]);
                 $plain = Str::random(40);
                 $tid = DB::table("personal_access_tokens")->insertGetId([
@@ -121,19 +121,33 @@ jobs:
           echo "Token obtained: $([ -n "$TOKEN" ] && echo YES || echo NO)"
           [ -n "$TOKEN" ] || { echo "ERROR: failed to get token"; exit 1; }
 
-          # Smoke test GET and POST before running Terraform
+          # Smoke test: GET then POST — both must succeed
           echo "=== Smoke test GET ==="
-          curl -sf http://localhost:8000/api/v1/projects \
-            -H "Authorization: Bearer $TOKEN" -w " HTTP:%{http_code}\n"
+          GET_STATUS=$(curl -s -o /tmp/get_resp.txt -X GET http://localhost:8000/api/v1/projects \
+            -H "Authorization: Bearer $TOKEN" -w "%{http_code}")
+          echo "GET /api/v1/projects HTTP $GET_STATUS: $(cat /tmp/get_resp.txt | head -c 200)"
+
+          if [ "$GET_STATUS" != "200" ]; then
+            echo "=== Coolify error log ==="
+            docker exec "$CONTAINER" tail -30 /var/www/html/storage/logs/laravel.log 2>/dev/null || true
+            echo "ERROR: GET returned $GET_STATUS"
+            exit 1
+          fi
 
           echo "=== Smoke test POST ==="
-          STATUS=$(curl -sf -o /dev/null -X POST http://localhost:8000/api/v1/projects \
+          POST_STATUS=$(curl -s -o /tmp/post_resp.txt -X POST http://localhost:8000/api/v1/projects \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             -d '{"name":"smoke","description":"test"}' \
-            -w "%{http_code}" 2>&1)
-          echo "POST status: $STATUS"
-          [ "$STATUS" = "201" ] || { echo "ERROR: POST returned $STATUS, not 201"; exit 1; }
+            -w "%{http_code}")
+          echo "POST /api/v1/projects HTTP $POST_STATUS: $(cat /tmp/post_resp.txt | head -c 200)"
+
+          if [ "$POST_STATUS" != "201" ]; then
+            echo "=== Coolify error log ==="
+            docker exec "$CONTAINER" tail -30 /var/www/html/storage/logs/laravel.log 2>/dev/null || true
+            echo "ERROR: POST returned $POST_STATUS"
+            exit 1
+          fi
 
           echo "::add-mask::$TOKEN"
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"

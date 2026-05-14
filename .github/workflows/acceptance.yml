@@ -118,11 +118,31 @@ jobs:
         run: |
           curl -sf http://localhost:8000 -o /dev/null -w "HTTP: %{http_code}\n"
 
-      - name: Get API token
+      - name: Create admin user and API token
         id: token
         run: |
           CONTAINER=$(docker ps --filter "name=^/coolify$" --format "{{.ID}}" | head -1)
-          echo "Container: $CONTAINER"
+          echo "Coolify container: $CONTAINER"
+
+          # Ensure a root user exists — ROOT_USER vars are only read by install.sh,
+          # not by the container startup. Create the user directly via artisan.
+          docker exec "$CONTAINER" php artisan tinker \
+            --execute='
+              if (!App\Models\User::count()) {
+                $user = App\Models\User::create([
+                  "name" => "admin",
+                  "email" => "ci@test.example.com",
+                  "password" => Hash::make("CItest1!Password"),
+                  "email_verified_at" => now(),
+                ]);
+                $team = new App\Models\Team(["name" => "Root Team", "personal_team" => true]);
+                $team->save();
+                $user->teams()->attach($team->id);
+                echo "Created user id=" . $user->id;
+              } else {
+                echo "User exists id=" . App\Models\User::first()->id;
+              }
+            ' 2>/dev/null | grep -v "^\s*$" | tail -1
 
           # Try standard createToken first
           TOKEN=$(docker exec "$CONTAINER" php artisan tinker \
@@ -164,6 +184,25 @@ jobs:
           # Mask the token in logs
           echo "::add-mask::$TOKEN"
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      # ── Smoke test token before Terraform ────────────────────────────────────
+      - name: Verify token works for GET and POST
+        run: |
+          TOKEN="${{ steps.token.outputs.token }}"
+          echo "=== GET /api/v1/projects ==="
+          curl -sf http://localhost:8000/api/v1/projects \
+            -H "Authorization: Bearer $TOKEN" -w " HTTP:%{http_code}\n"
+          echo "=== POST /api/v1/projects ==="
+          RESULT=$(curl -sf -X POST http://localhost:8000/api/v1/projects \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"smoke-test","description":"smoke"}' \
+            -w "\nHTTP:%{http_code}" 2>&1)
+          echo "$RESULT"
+          # Clean up smoke test project
+          UUID=$(echo "$RESULT" | python3 -c "import json,sys; print(json.loads(sys.stdin.readline()).get('uuid',''))" 2>/dev/null || true)
+          [ -n "$UUID" ] && curl -sf -X DELETE "http://localhost:8000/api/v1/projects/$UUID" \
+            -H "Authorization: Bearer $TOKEN" || true
 
       # ── Terraform tests ───────────────────────────────────────────────────────
       - name: Terraform Plan

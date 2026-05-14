@@ -143,22 +143,16 @@ jobs:
 
               // Create PrivateKey + Server so resource tests have a valid server_uuid
               try {
-                  // Reuse any existing private key, or create one from Coolify's generated key
                   $pk = \App\Models\PrivateKey::where('team_id', $teamId)->first();
                   if (!$pk) {
-                      $keyContent = '';
-                      foreach (['/data/coolify/ssh/keys/id.root@host.docker.internal',
-                                '/root/.ssh/id_rsa', '/root/.ssh/id_ed25519'] as $path) {
-                          if (file_exists($path)) {
-                              $keyContent = file_get_contents($path);
-                              break;
-                          }
-                      }
+                      // Generate a valid RSA key via OpenSSL
+                      $res = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+                      openssl_pkey_export($res, $pemKey);
                       $pk = \App\Models\PrivateKey::create([
-                          'name'        => 'CI Key',
-                          'description' => 'Auto-created for CI',
-                          'private_key' => $keyContent ?: '# placeholder',
-                          'team_id'     => $teamId,
+                          'name'           => 'CI Key',
+                          'description'    => 'Auto-generated RSA key for CI',
+                          'private_key'    => $pemKey,
+                          'team_id'        => $teamId,
                           'is_git_related' => false,
                       ]);
                       echo "Created private key id={$pk->id} uuid={$pk->uuid}\n";

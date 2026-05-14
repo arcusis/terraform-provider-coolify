@@ -133,6 +133,15 @@ func (p *CoolifyProvider) Resources(_ context.Context) []func() resource.Resourc
 		resources.NewDeployResource,
 		resources.NewEnvsBulkResource,
 		resources.NewPRPreviewResource,
+		// Server operations
+		resources.NewServerValidateResource,
+		// API settings
+		resources.NewAPISettingsResource,
+		// Scheduled task executions
+		resources.NewApplicationScheduledTaskExecutionResource,
+		resources.NewServiceScheduledTaskExecutionResource,
+		// Backup executions
+		resources.NewBackupExecutionResource,
 	}
 }
 
@@ -154,6 +163,24 @@ func (p *CoolifyProvider) DataSources(_ context.Context) []func() datasource.Dat
 		datasources.NewSystemInfoDataSource,
 		datasources.NewDeploymentsDataSource,
 		datasources.NewApplicationDeploymentsDataSource,
+		// List datasources
+		datasources.NewProjectsListDataSource,
+		datasources.NewApplicationsListDataSource,
+		datasources.NewServicesListDataSource,
+		datasources.NewDatabasesListDataSource,
+		datasources.NewServersListDataSource,
+		datasources.NewPrivateKeysListDataSource,
+		datasources.NewGitHubAppsListDataSource,
+		datasources.NewCloudTokensListDataSource,
+		datasources.NewTeamsListDataSource,
+		datasources.NewTeamMembersDataSource,
+		// Application data
+		datasources.NewApplicationLogsDataSource,
+		// Backup executions
+		datasources.NewBackupExecutionsDataSource,
+		// Hetzner extended
+		datasources.NewHetznerImagesDataSource,
+		datasources.NewHetznerSSHKeysDataSource,
 	}
 }
 

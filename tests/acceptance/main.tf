@@ -264,7 +264,8 @@ resource "coolify_service_environment_variable" "svc_var" {
 }
 
 # ── 24. Bulk environment variables ────────────────────────────────────────────
-# Tests PATCH /applications/{uuid}/envs/bulk
+# Tests PATCH /applications/{uuid}/envs/bulk, /services/{uuid}/envs/bulk,
+# and /databases/{uuid}/envs/bulk
 
 resource "coolify_envs_bulk" "app_bulk" {
   resource_type = "application"
@@ -272,6 +273,24 @@ resource "coolify_envs_bulk" "app_bulk" {
   variables = {
     "BULK_VAR_1" = "value1"
     "BULK_VAR_2" = "value2"
+  }
+}
+
+resource "coolify_envs_bulk" "svc_bulk" {
+  resource_type = "service"
+  resource_uuid = coolify_service.svc.id
+  variables = {
+    "SVC_BULK_1" = "svc_value1"
+    "SVC_BULK_2" = "svc_value2"
+  }
+}
+
+resource "coolify_envs_bulk" "db_bulk" {
+  resource_type = "database"
+  resource_uuid = coolify_database_postgresql.pg.id
+  variables = {
+    "DB_BULK_1" = "db_value1"
+    "DB_BULK_2" = "db_value2"
   }
 }
 
@@ -365,3 +384,92 @@ data "coolify_application_deployments" "app_deploys" {
 
 output "total_deployment_count" { value = length(data.coolify_deployments.all.deployments) }
 output "app_deployment_count"   { value = length(data.coolify_application_deployments.app_deploys.deployments) }
+
+# ── 35. List data sources ─────────────────────────────────────────────────────
+# Tests GET /projects, /applications, /services, /databases, /servers,
+# /security/keys, /github-apps, /cloud-tokens, /teams
+
+data "coolify_projects" "all" {}
+data "coolify_applications" "all" {}
+data "coolify_services" "all" {}
+data "coolify_databases" "all" {}
+data "coolify_servers" "all" {}
+data "coolify_private_keys" "all" {}
+data "coolify_github_apps" "all" { depends_on = [coolify_github_app.test] }
+data "coolify_teams" "all" {}
+
+output "project_count"     { value = length(data.coolify_projects.all.projects) }
+output "application_count" { value = length(data.coolify_applications.all.applications) }
+output "service_count"     { value = length(data.coolify_services.all.services) }
+output "database_count"    { value = length(data.coolify_databases.all.databases) }
+output "server_count"      { value = length(data.coolify_servers.all.servers) }
+output "private_key_count" { value = length(data.coolify_private_keys.all.private_keys) }
+output "github_app_count"  { value = length(data.coolify_github_apps.all.github_apps) }
+output "team_count"        { value = length(data.coolify_teams.all.teams) }
+
+# ── 36. Team members data source ─────────────────────────────────────────────
+# Tests GET /teams/{id}/members
+
+data "coolify_team_members" "root" {
+  team_id = data.coolify_team.current.id
+}
+output "team_member_count" { value = length(data.coolify_team_members.root.members) }
+
+# ── 37. Application logs data source ─────────────────────────────────────────
+# Tests GET /applications/{uuid}/logs
+
+data "coolify_application_logs" "app_logs" {
+  application_uuid = coolify_application.app.id
+}
+
+# ── 38. Server validate resource ─────────────────────────────────────────────
+# Tests GET /servers/{uuid}/validate
+
+resource "coolify_server_validate" "localhost" {
+  server_uuid = var.server_uuid
+}
+output "server_validate_status" { value = coolify_server_validate.localhost.status }
+
+# ── 39. API settings resource ─────────────────────────────────────────────────
+# Tests GET /api/v1/enable and GET /api/v1/disable
+
+resource "coolify_api_settings" "enabled" {
+  enabled = true
+}
+
+# ── 40. Application scheduled task execution ──────────────────────────────────
+# Tests DELETE /applications/{uuid}/scheduled-tasks/{task_uuid}/executions/{execution_uuid}
+# Uses a placeholder UUID — a 404 on delete is accepted as success
+
+resource "coolify_application_scheduled_task_execution" "dummy" {
+  parent_uuid    = coolify_application.app.id
+  task_uuid      = coolify_application_scheduled_task.task.id
+  execution_uuid = "00000000-0000-0000-0000-000000000001"
+}
+
+# ── 41. Service scheduled task execution ─────────────────────────────────────
+# Tests DELETE /services/{uuid}/scheduled-tasks/{task_uuid}/executions/{execution_uuid}
+
+resource "coolify_service_scheduled_task_execution" "dummy" {
+  parent_uuid    = coolify_service.svc.id
+  task_uuid      = coolify_service_scheduled_task.svc_task.id
+  execution_uuid = "00000000-0000-0000-0000-000000000002"
+}
+
+# ── 42. Backup execution resource ────────────────────────────────────────────
+# Tests DELETE /databases/{uuid}/backups/{scheduled_backup_uuid}/executions/{execution_uuid}
+
+resource "coolify_backup_execution" "dummy" {
+  database_uuid        = coolify_database_postgresql.pg.id
+  scheduled_backup_uuid = coolify_database_backup.pg_backup.id
+  execution_uuid       = "00000000-0000-0000-0000-000000000003"
+}
+
+# ── 43. Backup executions data source ─────────────────────────────────────────
+# Tests GET /databases/{uuid}/backups/{scheduled_backup_uuid}/executions
+
+data "coolify_backup_executions" "pg_execs" {
+  database_uuid        = coolify_database_postgresql.pg.id
+  scheduled_backup_uuid = coolify_database_backup.pg_backup.id
+}
+output "backup_execution_count" { value = length(data.coolify_backup_executions.pg_execs.executions) }

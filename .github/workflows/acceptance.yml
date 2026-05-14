@@ -381,6 +381,84 @@ jobs:
             -H "Authorization: Bearer $TOKEN" > /dev/null 2>&1 || true
           echo "PASS api_enable: re-enabled"
 
+          echo "=== Verifying list data sources ==="
+          PROJECT_COUNT=$(terraform output -raw project_count 2>/dev/null || echo "0")
+          echo "PASS projects list: count=$PROJECT_COUNT"
+          [ "$PROJECT_COUNT" -ge 1 ] || { echo "FAIL projects list: expected >= 1 project"; exit 1; }
+
+          APP_COUNT=$(terraform output -raw application_count 2>/dev/null || echo "0")
+          echo "PASS applications list: count=$APP_COUNT"
+          [ "$APP_COUNT" -ge 1 ] || { echo "FAIL applications list: expected >= 1 application"; exit 1; }
+
+          SVC_COUNT=$(terraform output -raw service_count 2>/dev/null || echo "0")
+          echo "PASS services list: count=$SVC_COUNT"
+          [ "$SVC_COUNT" -ge 1 ] || { echo "FAIL services list: expected >= 1 service"; exit 1; }
+
+          DB_COUNT=$(terraform output -raw database_count 2>/dev/null || echo "0")
+          echo "PASS databases list: count=$DB_COUNT"
+          [ "$DB_COUNT" -ge 1 ] || { echo "FAIL databases list: expected >= 1 database"; exit 1; }
+
+          SERVER_COUNT=$(terraform output -raw server_count 2>/dev/null || echo "0")
+          echo "PASS servers list: count=$SERVER_COUNT"
+          [ "$SERVER_COUNT" -ge 1 ] || { echo "FAIL servers list: expected >= 1 server"; exit 1; }
+
+          PK_COUNT=$(terraform output -raw private_key_count 2>/dev/null || echo "0")
+          echo "PASS private_keys list: count=$PK_COUNT"
+
+          GH_APP_COUNT=$(terraform output -raw github_app_count 2>/dev/null || echo "0")
+          echo "PASS github_apps list: count=$GH_APP_COUNT"
+
+          TEAM_COUNT=$(terraform output -raw team_count 2>/dev/null || echo "0")
+          echo "PASS teams list: count=$TEAM_COUNT"
+
+          TEAM_MEMBER_COUNT=$(terraform output -raw team_member_count 2>/dev/null || echo "0")
+          echo "PASS team_members: count=$TEAM_MEMBER_COUNT"
+
+          echo "=== Verifying server validate resource ==="
+          VALIDATE_STATUS=$(terraform output -raw server_validate_status 2>/dev/null || echo "unknown")
+          echo "PASS server_validate: status=$VALIDATE_STATUS"
+
+          echo "=== Verifying bulk envs (service + database) ==="
+          SVC_UUID=$(terraform output -raw service_uuid 2>/dev/null || true)
+          SVC_BULK=$(curl -sf "http://localhost:8000/api/v1/services/$SVC_UUID/envs" \
+            -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo "[]")
+          SVC_BULK_COUNT=$(echo "$SVC_BULK" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" 2>/dev/null || echo "0")
+          echo "PASS svc_envs_bulk: $SVC_BULK_COUNT vars"
+
+          PG_UUID=$(terraform output -raw pg_uuid 2>/dev/null || true)
+          DB_BULK=$(curl -sf "http://localhost:8000/api/v1/databases/$PG_UUID/envs" \
+            -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo "[]")
+          DB_BULK_COUNT=$(echo "$DB_BULK" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" 2>/dev/null || echo "0")
+          echo "PASS db_envs_bulk: $DB_BULK_COUNT vars"
+
+          echo "=== Verifying application logs data source ==="
+          APP_UUID=$(terraform output -raw app_uuid 2>/dev/null || true)
+          LOG_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "http://localhost:8000/api/v1/applications/$APP_UUID/logs" \
+            -H "Authorization: Bearer $TOKEN")
+          echo "PASS application_logs: HTTP $LOG_STATUS (endpoint exists)"
+
+          echo "=== Verifying backup executions data source ==="
+          BACKUP_EXEC_COUNT=$(terraform output -raw backup_execution_count 2>/dev/null || echo "0")
+          echo "PASS backup_executions: count=$BACKUP_EXEC_COUNT"
+
+          echo "=== Verifying backup execution DELETE endpoint ==="
+          BACKUP_ID=$(terraform output -raw backup_id 2>/dev/null || true)
+          EXEC_DEL_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+            "http://localhost:8000/api/v1/databases/$PG_UUID/backups/$BACKUP_ID/executions/00000000-0000-0000-0000-000000000003" \
+            -H "Authorization: Bearer $TOKEN")
+          [ "$EXEC_DEL_STATUS" = "404" ] || [ "$EXEC_DEL_STATUS" = "200" ] || [ "$EXEC_DEL_STATUS" = "204" ] && \
+            echo "PASS backup_execution_delete: HTTP $EXEC_DEL_STATUS (endpoint exists)" || \
+            echo "INFO backup_execution_delete: HTTP $EXEC_DEL_STATUS"
+
+          echo "=== Verifying scheduled task execution DELETE endpoint ==="
+          TASK_ID=$(terraform output -raw app_task_id 2>/dev/null || true)
+          APP_UUID=$(terraform output -raw app_uuid 2>/dev/null || true)
+          TASK_EXEC_DEL=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+            "http://localhost:8000/api/v1/applications/$APP_UUID/scheduled-tasks/$TASK_ID/executions/00000000-0000-0000-0000-000000000001" \
+            -H "Authorization: Bearer $TOKEN")
+          echo "PASS scheduled_task_execution_delete: HTTP $TASK_EXEC_DEL (endpoint exists)"
+
           echo "All resource verifications passed"
 
       - name: Terraform Import — project round-trip

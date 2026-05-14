@@ -43,11 +43,11 @@ jobs:
       # ROOT_USER_* vars are read by install.sh at install time.
       - name: Install Coolify
         run: |
-          sudo ROOT_USER_EMAIL=ci@test.example.com \
-               ROOT_USER_PASSWORD='CItest1!Password' \
+          # sudo strips env vars — use 'sudo env' to pass them explicitly
+          sudo env ROOT_USER_EMAIL=ci@test.example.com \
+                   ROOT_USER_PASSWORD='CItest1!Password' \
                bash -c 'curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash' \
-            2>&1 | tail -20
-          # Give containers time to finish startup
+            2>&1 | tail -30
           sleep 20
 
       - name: Wait for Coolify to be ready
@@ -75,7 +75,43 @@ jobs:
             --execute='App\Models\User::all(["id","email"])->each(fn($u) => print($u->id."|".$u->email."\n"));' \
             2>/dev/null | grep '|' | tail -5
 
-          # createToken should work now that user was created by install.sh
+          # If install.sh didn't create the root user, do it here via Coolify's
+          # own registration endpoint (creates user + team correctly)
+          USER_COUNT=$(docker exec "$CONTAINER" php artisan tinker \
+            --execute='echo App\Models\User::count();' \
+            2>/dev/null | grep -E '^[0-9]+$' | tail -1 || echo 0)
+          echo "Users in DB: $USER_COUNT"
+
+          if [ "$USER_COUNT" = "0" ]; then
+            echo "No user found — registering via Coolify API..."
+            curl -sf -X POST http://localhost:8000/api/v1/users \
+              -H "Content-Type: application/json" \
+              -d '{"name":"admin","email":"ci@test.example.com","password":"CItest1!Password","password_confirmation":"CItest1!Password"}' \
+              -w " HTTP:%{http_code}\n" 2>&1 || true
+
+            # If API registration failed, create via tinker as last resort
+            USER_COUNT2=$(docker exec "$CONTAINER" php artisan tinker \
+              --execute='echo App\Models\User::count();' \
+              2>/dev/null | grep -E '^[0-9]+$' | tail -1 || echo 0)
+            if [ "$USER_COUNT2" = "0" ]; then
+              echo "Falling back to artisan user creation..."
+              docker exec "$CONTAINER" php artisan tinker \
+                --execute='
+                  try {
+                    $u = App\Models\User::forceCreate([
+                      "name"=>"admin","email"=>"ci@test.example.com",
+                      "password"=>Hash::make("CItest1!Password"),
+                      "email_verified_at"=>now()
+                    ]);
+                    $t = App\Models\Team::forceCreate(["name"=>"Root Team","personal_team"=>true,"user_id"=>$u->id]);
+                    DB::table("team_user")->insert(["team_id"=>$t->id,"user_id"=>$u->id,"role"=>"owner"]);
+                    echo "Created ".$u->email;
+                  } catch(Exception $e) { echo "Error: ".$e->getMessage(); }
+                ' 2>/dev/null | grep -v '^\s*$' | tail -2
+            fi
+          fi
+
+          # Try standard createToken
           TOKEN=$(docker exec "$CONTAINER" php artisan tinker \
             --execute='$u=App\Models\User::first(); if($u) echo $u->createToken("ci")->plainTextToken;' \
             2>/dev/null | grep -E '^[0-9]+\|' | tail -1 || true)

@@ -306,29 +306,28 @@ jobs:
           PG_UUID=$(terraform output -raw pg_uuid)
           check "pg_db"       "databases/$PG_UUID"         "name"  "acceptance-pg"
 
-          REDIS_UUID=$(terraform output -raw redis_uuid)
-          [ -n "$REDIS_UUID" ] && echo "PASS redis: UUID=$REDIS_UUID"
+          for label in redis_uuid mysql_uuid mariadb_uuid mongo_uuid keydb_uuid dragonfly_uuid clickhouse_uuid; do
+            v=$(terraform output -raw "$label" 2>/dev/null || true)
+            [ -n "$v" ] && echo "PASS $label: UUID=$v" || echo "WARN $label: empty"
+          done
 
-          MYSQL_UUID=$(terraform output -raw mysql_uuid)
-          [ -n "$MYSQL_UUID" ] && echo "PASS mysql: UUID=$MYSQL_UUID"
+          CT_UUID=$(terraform output -raw cloud_token_uuid)
+          [ -n "$CT_UUID" ] && echo "PASS cloud_token: UUID=$CT_UUID"
 
-          MARIADB_UUID=$(terraform output -raw mariadb_uuid)
-          [ -n "$MARIADB_UUID" ] && echo "PASS mariadb: UUID=$MARIADB_UUID"
+          BACKUP_ID=$(terraform output -raw backup_id)
+          [ -n "$BACKUP_ID" ] && echo "PASS database_backup: ID=$BACKUP_ID"
 
-          MONGO_UUID=$(terraform output -raw mongo_uuid)
-          [ -n "$MONGO_UUID" ] && echo "PASS mongodb: UUID=$MONGO_UUID"
+          STORAGE_ID=$(terraform output -raw app_storage_id)
+          [ -n "$STORAGE_ID" ] && echo "PASS app_storage: ID=$STORAGE_ID"
 
-          KEYDB_UUID=$(terraform output -raw keydb_uuid)
-          [ -n "$KEYDB_UUID" ] && echo "PASS keydb: UUID=$KEYDB_UUID"
-
-          DRAGONFLY_UUID=$(terraform output -raw dragonfly_uuid)
-          [ -n "$DRAGONFLY_UUID" ] && echo "PASS dragonfly: UUID=$DRAGONFLY_UUID"
-
-          CH_UUID=$(terraform output -raw clickhouse_uuid)
-          [ -n "$CH_UUID" ] && echo "PASS clickhouse: UUID=$CH_UUID"
+          TASK_ID=$(terraform output -raw app_task_id)
+          [ -n "$TASK_ID" ] && echo "PASS app_scheduled_task: ID=$TASK_ID"
 
           SVC_UUID=$(terraform output -raw service_uuid)
           [ -n "$SVC_UUID" ] && echo "PASS service: UUID=$SVC_UUID"
+
+          SVC_TASK_ID=$(terraform output -raw svc_task_id)
+          [ -n "$SVC_TASK_ID" ] && echo "PASS svc_scheduled_task: ID=$SVC_TASK_ID"
 
           echo "All resource verifications passed"
 

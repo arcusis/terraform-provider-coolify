@@ -97,12 +97,24 @@ func (p *CoolifyProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 func (p *CoolifyProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
+		// Projects & environments
 		resources.NewProjectResource,
 		resources.NewEnvironmentResource,
+		// Infrastructure
 		resources.NewServerResource,
 		resources.NewPrivateKeyResource,
+		resources.NewCloudTokenResource,
+		resources.NewGitHubAppResource,
+		// Applications
 		resources.NewApplicationResource,
+		resources.NewApplicationStorageResource,
+		resources.NewApplicationScheduledTaskResource,
+		// Services
 		resources.NewServiceResource,
+		resources.NewServiceStorageResource,
+		resources.NewServiceScheduledTaskResource,
+		resources.NewServiceEnvironmentVariableResource,
+		// Databases
 		resources.NewPostgreSQLDatabaseResource,
 		resources.NewMySQLDatabaseResource,
 		resources.NewMariaDBDatabaseResource,
@@ -111,6 +123,10 @@ func (p *CoolifyProvider) Resources(_ context.Context) []func() resource.Resourc
 		resources.NewKeyDBDatabaseResource,
 		resources.NewDragonflyDatabaseResource,
 		resources.NewClickhouseDatabaseResource,
+		resources.NewDatabaseBackupResource,
+		resources.NewDatabaseStorageResource,
+		resources.NewDatabaseEnvironmentVariableResource,
+		// Environment variables
 		resources.NewEnvironmentVariableResource,
 	}
 }
@@ -124,6 +140,9 @@ func (p *CoolifyProvider) DataSources(_ context.Context) []func() datasource.Dat
 		datasources.NewApplicationDataSource,
 		datasources.NewServiceDataSource,
 		datasources.NewDatabaseDataSource,
+		datasources.NewDeploymentDataSource,
+		datasources.NewHetznerLocationsDataSource,
+		datasources.NewHetznerServerTypesDataSource,
 	}
 }
 

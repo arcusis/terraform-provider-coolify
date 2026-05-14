@@ -13,6 +13,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -36,6 +40,8 @@ type resourceField struct {
 	Sensitive   bool
 	Send        bool
 	SkipAPIRead bool // don't overwrite from API response (write-only fields the API never returns)
+	ForceNew    bool // changing this field requires destroy-and-recreate
+	Description string
 }
 
 func stringField(name string, required, optional, sensitive bool) resourceField {
@@ -54,15 +60,31 @@ func computedStringField(name string) resourceField {
 	return resourceField{Name: name, Kind: kindString, Computed: true, Send: false}
 }
 
+func forceNewStringField(name string) resourceField {
+	return resourceField{Name: name, Kind: kindString, Required: true, Send: true, ForceNew: true}
+}
+
 func (f resourceField) schemaAttribute() schema.Attribute {
 	computed := f.Computed || (f.Optional && !f.Required)
 	switch f.Kind {
 	case kindBool:
-		return schema.BoolAttribute{Required: f.Required, Optional: f.Optional, Computed: computed, Sensitive: f.Sensitive}
+		attr := schema.BoolAttribute{Required: f.Required, Optional: f.Optional, Computed: computed, Sensitive: f.Sensitive, Description: f.Description}
+		if f.ForceNew {
+			attr.PlanModifiers = []planmodifier.Bool{boolplanmodifier.RequiresReplace()}
+		}
+		return attr
 	case kindInt64:
-		return schema.Int64Attribute{Required: f.Required, Optional: f.Optional, Computed: computed, Sensitive: f.Sensitive}
+		attr := schema.Int64Attribute{Required: f.Required, Optional: f.Optional, Computed: computed, Sensitive: f.Sensitive, Description: f.Description}
+		if f.ForceNew {
+			attr.PlanModifiers = []planmodifier.Int64{int64planmodifier.RequiresReplace()}
+		}
+		return attr
 	default:
-		return schema.StringAttribute{Required: f.Required, Optional: f.Optional, Computed: computed, Sensitive: f.Sensitive}
+		attr := schema.StringAttribute{Required: f.Required, Optional: f.Optional, Computed: computed, Sensitive: f.Sensitive, Description: f.Description}
+		if f.ForceNew {
+			attr.PlanModifiers = []planmodifier.String{stringplanmodifier.RequiresReplace()}
+		}
+		return attr
 	}
 }
 

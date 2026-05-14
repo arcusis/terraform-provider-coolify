@@ -272,7 +272,6 @@ resource "coolify_service_storage" "svc_vol" {
   resource_uuid = var.ghost_resource_uuid
 }
 output "svc_storage_id" { value = length(coolify_service_storage.svc_vol) > 0 ? coolify_service_storage.svc_vol[0].id : "" }
-output "svc_storage_id" { value = coolify_service_storage.svc_vol.id }
 
 # ── 22. Service scheduled task ────────────────────────────────────────────────
 

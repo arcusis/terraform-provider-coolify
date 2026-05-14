@@ -83,38 +83,40 @@ jobs:
           echo "Users in DB: $USER_COUNT"
 
           if [ "$USER_COUNT" = "0" ]; then
-            echo "No user found — registering via Coolify API..."
-            curl -sf -X POST http://localhost:8000/api/v1/users \
-              -H "Content-Type: application/json" \
-              -d '{"name":"admin","email":"ci@test.example.com","password":"CItest1!Password","password_confirmation":"CItest1!Password"}' \
-              -w " HTTP:%{http_code}\n" 2>&1 || true
-
-            # If API registration failed, create via tinker as last resort
-            USER_COUNT2=$(docker exec "$CONTAINER" php artisan tinker \
-              --execute='echo App\Models\User::count();' \
-              2>/dev/null | grep -E '^[0-9]+$' | tail -1 || echo 0)
-            if [ "$USER_COUNT2" = "0" ]; then
-              echo "Falling back to artisan user creation..."
-              docker exec "$CONTAINER" php artisan tinker \
-                --execute='
-                  try {
-                    $u = App\Models\User::forceCreate([
-                      "name"=>"admin","email"=>"ci@test.example.com",
-                      "password"=>Hash::make("CItest1!Password"),
-                      "email_verified_at"=>now()
-                    ]);
-                    $t = App\Models\Team::forceCreate(["name"=>"Root Team","personal_team"=>true,"user_id"=>$u->id]);
-                    DB::table("team_user")->insert(["team_id"=>$t->id,"user_id"=>$u->id,"role"=>"owner"]);
-                    echo "Created ".$u->email;
-                  } catch(Exception $e) { echo "Error: ".$e->getMessage(); }
-                ' 2>/dev/null | grep -v '^\s*$' | tail -2
-            fi
+            echo "No user — creating via artisan with direct SQL token..."
+            # teams table has no user_id column; team_user pivot has (team_id, user_id)
+            # createToken fails if no current team context, so we insert the token directly
+            docker exec "$CONTAINER" php artisan tinker \
+              --execute='
+                $u = App\Models\User::forceCreate([
+                  "name"=>"admin","email"=>"ci@test.example.com",
+                  "password"=>Hash::make("CItest1!Password"),
+                  "email_verified_at"=>now()
+                ]);
+                $t = App\Models\Team::forceCreate(["name"=>"Root Team","personal_team"=>true]);
+                DB::table("team_user")->insert(["team_id"=>$t->id,"user_id"=>$u->id]);
+                $plain = Str::random(40);
+                $tid = DB::table("personal_access_tokens")->insertGetId([
+                  "tokenable_type"=>"App\\\Models\\\User",
+                  "tokenable_id"=>$u->id,
+                  "name"=>"ci",
+                  "token"=>hash("sha256",$plain),
+                  "team_id"=>(string)$t->id,
+                  "abilities"=>"[\"*\"]",
+                  "created_at"=>now(),
+                  "updated_at"=>now(),
+                ]);
+                echo $tid."|".$plain;
+              ' 2>/dev/null | grep -E '^[0-9]+\|' | tail -1 > /tmp/ci_token.txt
+            TOKEN=$(cat /tmp/ci_token.txt)
           fi
 
-          # Try standard createToken
-          TOKEN=$(docker exec "$CONTAINER" php artisan tinker \
-            --execute='$u=App\Models\User::first(); if($u) echo $u->createToken("ci")->plainTextToken;' \
-            2>/dev/null | grep -E '^[0-9]+\|' | tail -1 || true)
+          # If user already existed (created by install.sh), try standard createToken
+          if [ -z "$TOKEN" ]; then
+            TOKEN=$(docker exec "$CONTAINER" php artisan tinker \
+              --execute='$u=App\Models\User::first(); if($u) echo $u->createToken("ci")->plainTextToken;' \
+              2>/dev/null | grep -E '^[0-9]+\|' | tail -1 || true)
+          fi
 
           echo "Token obtained: $([ -n "$TOKEN" ] && echo YES || echo NO)"
           [ -n "$TOKEN" ] || { echo "ERROR: failed to get token"; exit 1; }

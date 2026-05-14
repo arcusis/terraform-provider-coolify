@@ -267,13 +267,7 @@ jobs:
           TF_VAR_server_uuid: ${{ steps.token.outputs.server_uuid }}
           TF_VAR_test_private_key: ${{ steps.prereqs.outputs.test_private_key }}
         run: |
-          echo "=== Workspace files ==="
-          ls -la
-          echo "=== Lock file content (if any) ==="
-          cat .terraform.lock.hcl 2>/dev/null || echo "(no lock file)"
           rm -rf .terraform .terraform.lock.hcl
-          echo "=== After cleanup ==="
-          ls -la
           terraform plan -no-color
 
       - name: Terraform Apply

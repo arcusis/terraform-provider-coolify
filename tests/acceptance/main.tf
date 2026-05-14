@@ -56,9 +56,9 @@ output "private_key_name_readback" { value = data.coolify_private_key.readback.n
 # ── 4. Cloud token ─────────────────────────────────────────────────────────────
 
 resource "coolify_cloud_token" "test" {
-  name     = "acceptance-token"
-  provider = "hetzner"
-  token    = "dummy-ci-token-not-for-real-use"
+  name           = "acceptance-token"
+  cloud_provider = "hetzner"
+  token          = "dummy-ci-token-not-for-real-use"
 }
 output "cloud_token_uuid" { value = coolify_cloud_token.test.id }
 

@@ -74,6 +74,19 @@ func (r *instanceSettingsResource) readSettings(ctx context.Context) (map[string
 }
 
 func (r *instanceSettingsResource) populate(data map[string]any, m *instanceSettingsModel) {
+	// Always set Computed fields to known values so Terraform doesn't see Unknown after apply
+	if m.IsAutoUpdateEnabled.IsUnknown() {
+		m.IsAutoUpdateEnabled = types.BoolValue(false)
+	}
+	if m.IsRegistrationEnabled.IsUnknown() {
+		m.IsRegistrationEnabled = types.BoolValue(false)
+	}
+	if m.IsUsageTrackingEnabled.IsUnknown() {
+		m.IsUsageTrackingEnabled = types.BoolValue(false)
+	}
+	if m.FQDN.IsUnknown() {
+		m.FQDN = types.StringValue("")
+	}
 	if v, ok := data["is_auto_update_enabled"]; ok {
 		m.IsAutoUpdateEnabled = types.BoolValue(boolFromAny(v))
 	}

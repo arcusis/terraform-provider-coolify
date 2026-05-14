@@ -47,9 +47,19 @@ func (r *profileResource) Configure(_ context.Context, req resource.ConfigureReq
 }
 
 func (r *profileResource) readProfile(ctx context.Context, m *profileResourceModel) error {
+	// Ensure Computed fields are always known after apply
+	if m.ID.IsUnknown() || m.ID.IsNull() {
+		m.ID = types.StringValue("")
+	}
+	if m.Name.IsUnknown() {
+		m.Name = types.StringValue("")
+	}
+	if m.Email.IsUnknown() {
+		m.Email = types.StringValue("")
+	}
 	var out map[string]any
 	if err := r.client.Get(ctx, "/api/v1/profile", &out); err != nil {
-		// /profile may not exist in all Coolify versions
+		// /profile may not exist in all Coolify versions — keep empty known values
 		return nil
 	}
 	data := objectPayload(out)

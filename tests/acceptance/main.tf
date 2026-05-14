@@ -184,6 +184,17 @@ resource "coolify_database_environment_variable" "pg_var" {
   value         = "true"
 }
 
+# ── 16b. Database storage ──────────────────────────────────────────────────────
+# Tests POST/GET-list/DELETE /databases/{uuid}/storages
+
+resource "coolify_database_storage" "pg_vol" {
+  database_uuid = coolify_database_postgresql.pg.id
+  type          = "volume"
+  mount_path    = "/var/lib/postgresql/extra"
+  name          = "acceptance-pg-vol"
+}
+output "db_storage_id" { value = coolify_database_storage.pg_vol.id }
+
 # ── 17. Application (Docker image) ────────────────────────────────────────────
 
 resource "coolify_application" "app" {
@@ -243,6 +254,17 @@ resource "coolify_service" "svc" {
 output "service_uuid" { value = coolify_service.svc.id }
 
 data "coolify_service" "svc_readback" { uuid = coolify_service.svc.id }
+
+# ── 21b. Service storage ───────────────────────────────────────────────────────
+# Tests POST/GET-list/DELETE /services/{uuid}/storages
+
+resource "coolify_service_storage" "svc_vol" {
+  service_uuid = coolify_service.svc.id
+  type         = "volume"
+  mount_path   = "/svc-data"
+  name         = "acceptance-svc-vol"
+}
+output "svc_storage_id" { value = coolify_service_storage.svc_vol.id }
 
 # ── 22. Service scheduled task ────────────────────────────────────────────────
 
@@ -473,3 +495,17 @@ data "coolify_backup_executions" "pg_execs" {
   scheduled_backup_uuid = coolify_database_backup.pg_backup.id
 }
 output "backup_execution_count" { value = length(data.coolify_backup_executions.pg_execs.executions) }
+
+# ── 44. Single deployment data source ────────────────────────────────────────
+# Tests GET /deployments/{uuid}
+
+data "coolify_deployment" "app_latest" {
+  uuid = coolify_deploy.app_deploy.deployment_uuid
+}
+output "deployment_status" { value = data.coolify_deployment.app_latest.status }
+
+# ── 45. Cloud tokens data source (always tested, may be empty) ────────────────
+# Tests GET /cloud-tokens
+
+data "coolify_cloud_tokens" "all" {}
+output "cloud_token_count" { value = length(data.coolify_cloud_tokens.all.cloud_tokens) }

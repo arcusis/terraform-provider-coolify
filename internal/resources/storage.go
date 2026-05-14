@@ -28,7 +28,8 @@ func storageResource(parentType, parentPath string, requiresResourceUUID bool) r
 		boolField("is_readonly", false, true, false),
 	}
 	if requiresResourceUUID {
-		fields = append(fields, stringField("resource_uuid", true, false, false))
+		// Optional — Coolify assigns to the first sub-service when omitted
+		fields = append(fields, stringField("resource_uuid", false, true, false))
 	}
 
 	return &compositeResource{

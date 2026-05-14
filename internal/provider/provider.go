@@ -135,6 +135,7 @@ func (p *CoolifyProvider) Resources(_ context.Context) []func() resource.Resourc
 		resources.NewPRPreviewResource,
 		// Server operations
 		resources.NewServerValidateResource,
+		resources.NewServerHetznerResource,
 		// API settings
 		resources.NewAPISettingsResource,
 		// Scheduled task executions

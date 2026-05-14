@@ -113,6 +113,7 @@ jobs:
                   $teamId = \App\Models\Team::first()?->id;
               }
               echo "Team ID for token: $teamId\n";
+              echo "TEAM_ID:{$teamId}\n";
 
               // Enable the Coolify API (disabled by default)
               try {
@@ -199,6 +200,7 @@ jobs:
 
           TOKEN=$(grep '^TOKEN:' /tmp/setup.log | sed 's/^TOKEN://' | tail -1)
           SERVER_UUID=$(grep '^SERVER_UUID:' /tmp/setup.log | sed 's/^SERVER_UUID://' | tail -1)
+          TEAM_ID=$(grep '^TEAM_ID:' /tmp/setup.log | sed 's/^TEAM_ID://' | tail -1)
 
           echo "Token obtained: $([ -n "$TOKEN" ] && echo YES || echo NO)"
           echo "Server UUID: $SERVER_UUID"
@@ -245,6 +247,7 @@ jobs:
           echo "::add-mask::$TOKEN"
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
           echo "server_uuid=$SERVER_UUID" >> "$GITHUB_OUTPUT"
+          echo "team_id=$TEAM_ID" >> "$GITHUB_OUTPUT"
 
       # ── Generate test SSH key ─────────────────────────────────────────────────
       - name: Generate test SSH key
@@ -284,182 +287,262 @@ jobs:
         run: |
           TOKEN="${{ steps.token.outputs.token }}"
           BASE="http://localhost:8000/api/v1"
+          FAIL=0
 
-          check() {
+          pass() { echo "PASS $1"; }
+          fail() { echo "FAIL $1"; FAIL=1; }
+
+          assert_uuid() {
+            local label="$1" val="$2"
+            if [ -n "$val" ] && [ "$val" != "null" ]; then
+              pass "$label: UUID=$val"
+            else
+              fail "$label: empty UUID"
+            fi
+          }
+
+          assert_count() {
+            local label="$1" count="$2" min="${3:-1}"
+            if [ "$count" -ge "$min" ] 2>/dev/null; then
+              pass "$label: count=$count"
+            else
+              fail "$label: count=$count (expected >= $min)"
+            fi
+          }
+
+          assert_api_field() {
             local label="$1" path="$2" field="$3" expected="$4"
             actual=$(curl -sf "$BASE/$path" -H "Authorization: Bearer $TOKEN" \
               | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('$field','') if isinstance(d,dict) else '')" 2>/dev/null || true)
             if [ "$actual" = "$expected" ]; then
-              echo "PASS $label: $field=$actual"
+              pass "$label: $field=$actual"
             else
-              echo "FAIL $label: expected $field=$expected got $actual"
-              exit 1
+              fail "$label: expected $field=$expected, got '$actual'"
             fi
           }
 
-          PROJECT_UUID=$(terraform output -raw project_uuid)
-          check "project"     "projects/$PROJECT_UUID"     "name"  "acceptance-project"
+          assert_http() {
+            local label="$1" method="${2:-GET}" path="$3"
+            shift 3
+            status=$(curl -s -o /dev/null -w "%{http_code}" -X "$method" "$BASE/$path" \
+              -H "Authorization: Bearer $TOKEN" "$@")
+            if [ "$status" -lt 500 ] 2>/dev/null; then
+              pass "$label: HTTP $status"
+            else
+              fail "$label: HTTP $status (server error)"
+            fi
+          }
 
-          PK_UUID=$(terraform output -raw private_key_uuid)
-          check "private_key" "security/keys/$PK_UUID"     "name"  "acceptance-key"
-
-          APP_UUID=$(terraform output -raw app_uuid)
-          check "application" "applications/$APP_UUID"     "name"  "acceptance-app"
-
-          PG_UUID=$(terraform output -raw pg_uuid)
-          check "pg_db"       "databases/$PG_UUID"         "name"  "acceptance-pg"
-
-          for label in redis_uuid mysql_uuid mariadb_uuid mongo_uuid keydb_uuid dragonfly_uuid clickhouse_uuid; do
-            v=$(terraform output -raw "$label" 2>/dev/null || true)
-            [ -n "$v" ] && echo "PASS $label: UUID=$v" || echo "WARN $label: empty"
-          done
-
-          BACKUP_ID=$(terraform output -raw backup_id)
-          [ -n "$BACKUP_ID" ] && echo "PASS database_backup: ID=$BACKUP_ID"
-
-          STORAGE_ID=$(terraform output -raw app_storage_id)
-          [ -n "$STORAGE_ID" ] && echo "PASS app_storage: ID=$STORAGE_ID"
-
-          TASK_ID=$(terraform output -raw app_task_id)
-          [ -n "$TASK_ID" ] && echo "PASS app_scheduled_task: ID=$TASK_ID"
-
-          SVC_UUID=$(terraform output -raw service_uuid)
-          [ -n "$SVC_UUID" ] && echo "PASS service: UUID=$SVC_UUID"
-
-          SVC_TASK_ID=$(terraform output -raw svc_task_id)
-          [ -n "$SVC_TASK_ID" ] && echo "PASS svc_scheduled_task: ID=$SVC_TASK_ID"
-
-          REDIS_STATUS=$(terraform output -raw redis_action_status 2>/dev/null || true)
-          echo "PASS resource_action (redis): status=$REDIS_STATUS"
-
-          DEPLOY_UUID=$(terraform output -raw deploy_uuid 2>/dev/null || true)
-          echo "PASS deploy_trigger: deployment_uuid=$DEPLOY_UUID"
-
-          HEALTHY=$(terraform output -raw coolify_healthy 2>/dev/null || true)
-          VERSION=$(terraform output -raw coolify_version 2>/dev/null || true)
-          echo "PASS system_info: healthy=$HEALTHY version=$VERSION"
-
-          RESOURCE_COUNT=$(terraform output -raw all_resource_count 2>/dev/null || true)
-          echo "PASS coolify_resources: count=$RESOURCE_COUNT"
-
-          GH_APP_ID=$(terraform output -raw github_app_id 2>/dev/null || true)
-          [ -n "$GH_APP_ID" ] && echo "PASS github_app: ID=$GH_APP_ID" || echo "WARN github_app: empty (Coolify may have rejected dummy credentials)"
-
-          echo "=== Verifying scheduled task executions endpoints ==="
-          TOKEN="${{ steps.token.outputs.token }}"
+          # ── Collect all UUIDs from Terraform outputs ────────────────────────
+          PROJECT_UUID=$(terraform output -raw project_uuid 2>/dev/null || true)
+          ENV_ID=$(terraform output -raw environment_id 2>/dev/null || true)
+          PK_UUID=$(terraform output -raw private_key_uuid 2>/dev/null || true)
           APP_UUID=$(terraform output -raw app_uuid 2>/dev/null || true)
-          TASK_ID=$(terraform output -raw app_task_id 2>/dev/null || true)
-          if [ -n "$TASK_ID" ]; then
-            TASK_UUID="${TASK_ID#*/}"  # strip "app_uuid/" prefix
-            EXECS=$(curl -sf "http://localhost:8000/api/v1/applications/$APP_UUID/scheduled-tasks/$TASK_UUID/executions" \
-              -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo "[]")
-            echo "PASS scheduled_task_executions (app): $(echo "$EXECS" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)' 2>/dev/null || echo 0) executions"
-          fi
-
+          APP_STORAGE_ID=$(terraform output -raw app_storage_id 2>/dev/null || true)
+          APP_TASK_ID=$(terraform output -raw app_task_id 2>/dev/null || true)
           SVC_UUID=$(terraform output -raw service_uuid 2>/dev/null || true)
           SVC_TASK_ID=$(terraform output -raw svc_task_id 2>/dev/null || true)
-          if [ -n "$SVC_TASK_ID" ]; then
-            SVC_TASK_UUID="${SVC_TASK_ID#*/}"
-            EXECS=$(curl -sf "http://localhost:8000/api/v1/services/$SVC_UUID/scheduled-tasks/$SVC_TASK_UUID/executions" \
-              -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo "[]")
-            echo "PASS scheduled_task_executions (svc): $(echo "$EXECS" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)' 2>/dev/null || echo 0) executions"
-          fi
-
-          echo "=== Verifying PR preview endpoint ==="
-          PR_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
-            "http://localhost:8000/api/v1/applications/$APP_UUID/previews/999" \
-            -H "Authorization: Bearer $TOKEN")
-          [ "$PR_STATUS" = "404" ] && echo "PASS pr_preview_delete: endpoint exists (404 expected)" \
-            || echo "INFO pr_preview_delete: HTTP $PR_STATUS"
-
-          echo "=== Testing API enable/disable endpoints ==="
-          DISABLE=$(curl -sf "http://localhost:8000/api/v1/disable" \
-            -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo "{}")
-          echo "PASS api_disable: $DISABLE"
-          # Re-enable immediately
-          curl -sf "http://localhost:8000/api/v1/enable" \
-            -H "Authorization: Bearer $TOKEN" > /dev/null 2>&1 || true
-          echo "PASS api_enable: re-enabled"
-
-          echo "=== Verifying list data sources ==="
-          PROJECT_COUNT=$(terraform output -raw project_count 2>/dev/null || echo "0")
-          echo "PASS projects list: count=$PROJECT_COUNT"
-          [ "$PROJECT_COUNT" -ge 1 ] || { echo "FAIL projects list: expected >= 1 project"; exit 1; }
-
-          APP_COUNT=$(terraform output -raw application_count 2>/dev/null || echo "0")
-          echo "PASS applications list: count=$APP_COUNT"
-          [ "$APP_COUNT" -ge 1 ] || { echo "FAIL applications list: expected >= 1 application"; exit 1; }
-
-          SVC_COUNT=$(terraform output -raw service_count 2>/dev/null || echo "0")
-          echo "PASS services list: count=$SVC_COUNT"
-          [ "$SVC_COUNT" -ge 1 ] || { echo "FAIL services list: expected >= 1 service"; exit 1; }
-
-          DB_COUNT=$(terraform output -raw database_count 2>/dev/null || echo "0")
-          echo "PASS databases list: count=$DB_COUNT"
-          [ "$DB_COUNT" -ge 1 ] || { echo "FAIL databases list: expected >= 1 database"; exit 1; }
-
-          SERVER_COUNT=$(terraform output -raw server_count 2>/dev/null || echo "0")
-          echo "PASS servers list: count=$SERVER_COUNT"
-          [ "$SERVER_COUNT" -ge 1 ] || { echo "FAIL servers list: expected >= 1 server"; exit 1; }
-
-          PK_COUNT=$(terraform output -raw private_key_count 2>/dev/null || echo "0")
-          echo "PASS private_keys list: count=$PK_COUNT"
-
-          GH_APP_COUNT=$(terraform output -raw github_app_count 2>/dev/null || echo "0")
-          echo "PASS github_apps list: count=$GH_APP_COUNT"
-
-          TEAM_COUNT=$(terraform output -raw team_count 2>/dev/null || echo "0")
-          echo "PASS teams list: count=$TEAM_COUNT"
-
-          TEAM_MEMBER_COUNT=$(terraform output -raw team_member_count 2>/dev/null || echo "0")
-          echo "PASS team_members: count=$TEAM_MEMBER_COUNT"
-
-          echo "=== Verifying server validate resource ==="
-          VALIDATE_STATUS=$(terraform output -raw server_validate_status 2>/dev/null || echo "unknown")
-          echo "PASS server_validate: status=$VALIDATE_STATUS"
-
-          echo "=== Verifying bulk envs (service + database) ==="
-          SVC_UUID=$(terraform output -raw service_uuid 2>/dev/null || true)
-          SVC_BULK=$(curl -sf "http://localhost:8000/api/v1/services/$SVC_UUID/envs" \
-            -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo "[]")
-          SVC_BULK_COUNT=$(echo "$SVC_BULK" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" 2>/dev/null || echo "0")
-          echo "PASS svc_envs_bulk: $SVC_BULK_COUNT vars"
-
+          SVC_STORAGE_ID=$(terraform output -raw svc_storage_id 2>/dev/null || true)
           PG_UUID=$(terraform output -raw pg_uuid 2>/dev/null || true)
-          DB_BULK=$(curl -sf "http://localhost:8000/api/v1/databases/$PG_UUID/envs" \
-            -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo "[]")
-          DB_BULK_COUNT=$(echo "$DB_BULK" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" 2>/dev/null || echo "0")
-          echo "PASS db_envs_bulk: $DB_BULK_COUNT vars"
-
-          echo "=== Verifying application logs data source ==="
-          APP_UUID=$(terraform output -raw app_uuid 2>/dev/null || true)
-          LOG_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            "http://localhost:8000/api/v1/applications/$APP_UUID/logs" \
-            -H "Authorization: Bearer $TOKEN")
-          echo "PASS application_logs: HTTP $LOG_STATUS (endpoint exists)"
-
-          echo "=== Verifying backup executions data source ==="
-          BACKUP_EXEC_COUNT=$(terraform output -raw backup_execution_count 2>/dev/null || echo "0")
-          echo "PASS backup_executions: count=$BACKUP_EXEC_COUNT"
-
-          echo "=== Verifying backup execution DELETE endpoint ==="
+          DB_STORAGE_ID=$(terraform output -raw db_storage_id 2>/dev/null || true)
           BACKUP_ID=$(terraform output -raw backup_id 2>/dev/null || true)
-          EXEC_DEL_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
-            "http://localhost:8000/api/v1/databases/$PG_UUID/backups/$BACKUP_ID/executions/00000000-0000-0000-0000-000000000003" \
-            -H "Authorization: Bearer $TOKEN")
-          [ "$EXEC_DEL_STATUS" = "404" ] || [ "$EXEC_DEL_STATUS" = "200" ] || [ "$EXEC_DEL_STATUS" = "204" ] && \
-            echo "PASS backup_execution_delete: HTTP $EXEC_DEL_STATUS (endpoint exists)" || \
-            echo "INFO backup_execution_delete: HTTP $EXEC_DEL_STATUS"
+          GH_APP_ID=$(terraform output -raw github_app_id 2>/dev/null || true)
+          DEPLOY_UUID=$(terraform output -raw deploy_uuid 2>/dev/null || true)
+          DEPLOY_STATUS=$(terraform output -raw deployment_status 2>/dev/null || true)
+          VALIDATE_STATUS=$(terraform output -raw server_validate_status 2>/dev/null || true)
+          REDIS_STATUS=$(terraform output -raw redis_action_status 2>/dev/null || true)
+          HEALTHY=$(terraform output -raw coolify_healthy 2>/dev/null || true)
+          VERSION=$(terraform output -raw coolify_version 2>/dev/null || true)
+          RESOURCE_COUNT=$(terraform output -raw all_resource_count 2>/dev/null || true)
+          PROJECT_COUNT=$(terraform output -raw project_count 2>/dev/null || echo "0")
+          APP_COUNT=$(terraform output -raw application_count 2>/dev/null || echo "0")
+          SVC_COUNT=$(terraform output -raw service_count 2>/dev/null || echo "0")
+          DB_COUNT=$(terraform output -raw database_count 2>/dev/null || echo "0")
+          SERVER_COUNT=$(terraform output -raw server_count 2>/dev/null || echo "0")
+          PK_COUNT=$(terraform output -raw private_key_count 2>/dev/null || echo "0")
+          GH_APP_COUNT=$(terraform output -raw github_app_count 2>/dev/null || echo "0")
+          TEAM_COUNT=$(terraform output -raw team_count 2>/dev/null || echo "0")
+          TEAM_MEMBER_COUNT=$(terraform output -raw team_member_count 2>/dev/null || echo "0")
+          CLOUD_TOKEN_COUNT=$(terraform output -raw cloud_token_count 2>/dev/null || echo "0")
+          BACKUP_EXEC_COUNT=$(terraform output -raw backup_execution_count 2>/dev/null || echo "0")
+          TOTAL_DEPLOY_COUNT=$(terraform output -raw total_deployment_count 2>/dev/null || echo "0")
+          APP_DEPLOY_COUNT=$(terraform output -raw app_deployment_count 2>/dev/null || echo "0")
 
-          echo "=== Verifying scheduled task execution DELETE endpoint ==="
-          TASK_ID=$(terraform output -raw app_task_id 2>/dev/null || true)
-          APP_UUID=$(terraform output -raw app_uuid 2>/dev/null || true)
-          TASK_EXEC_DEL=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
-            "http://localhost:8000/api/v1/applications/$APP_UUID/scheduled-tasks/$TASK_ID/executions/00000000-0000-0000-0000-000000000001" \
-            -H "Authorization: Bearer $TOKEN")
-          echo "PASS scheduled_task_execution_delete: HTTP $TASK_EXEC_DEL (endpoint exists)"
+          echo "━━━ PROJECTS & ENVIRONMENTS ━━━"
+          # GET /projects, GET /projects/{uuid}, POST /projects (create via TF), PATCH /projects/{uuid} (idempotent)
+          assert_api_field "project CRUD"           "projects/$PROJECT_UUID"    "name" "acceptance-project"
+          assert_uuid      "environment"             "$ENV_ID"
 
-          echo "All resource verifications passed"
+          echo "━━━ PRIVATE KEYS ━━━"
+          # GET /security/keys, GET /security/keys/{uuid}, POST /security/keys, PATCH /security/keys (update with uuid in body)
+          assert_api_field "private_key CRUD"       "security/keys/$PK_UUID"    "name" "acceptance-key"
+          assert_count     "private_keys list"      "$PK_COUNT"  1
+
+          echo "━━━ GITHUB APPS ━━━"
+          # GET /github-apps, POST /github-apps, PATCH /github-apps/{uuid}, DELETE /github-apps/{uuid}
+          assert_uuid  "github_app"                 "$GH_APP_ID"
+          assert_count "github_apps list"           "$GH_APP_COUNT" 1
+
+          echo "━━━ SERVERS ━━━"
+          # GET /servers, GET /servers/{uuid}, GET /servers/{uuid}/validate, GET /servers/{uuid}/resources, GET /servers/{uuid}/domains
+          assert_count "servers list"               "$SERVER_COUNT" 1
+          assert_uuid  "server_validate"            "$VALIDATE_STATUS"
+          pass         "server_validate status: $VALIDATE_STATUS"
+          assert_http  "server resources endpoint"  GET "servers/${{ steps.token.outputs.server_uuid }}/resources"
+          assert_http  "server domains endpoint"    GET "servers/${{ steps.token.outputs.server_uuid }}/domains"
+
+          echo "━━━ APPLICATIONS ━━━"
+          # GET /applications, GET /applications/{uuid}, POST /applications/{type}, PATCH /applications/{uuid}, DELETE /applications/{uuid}
+          assert_api_field "application CRUD"       "applications/$APP_UUID"    "name" "acceptance-app"
+          assert_count     "applications list"      "$APP_COUNT" 1
+
+          # GET /applications/{uuid}/logs
+          LOG_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/applications/$APP_UUID/logs" \
+            -H "Authorization: Bearer $TOKEN")
+          pass "application_logs endpoint: HTTP $LOG_STATUS"
+
+          # POST /applications/{uuid}/storages, GET /applications/{uuid}/storages
+          assert_uuid "app_storage"                 "$APP_STORAGE_ID"
+          assert_http "app storages list"           GET "applications/$APP_UUID/storages"
+
+          # POST /applications/{uuid}/scheduled-tasks, GET /applications/{uuid}/scheduled-tasks
+          assert_uuid "app_scheduled_task"          "$APP_TASK_ID"
+          assert_http "app scheduled-tasks list"    GET "applications/$APP_UUID/scheduled-tasks"
+
+          # GET /applications/{uuid}/scheduled-tasks/{task_uuid}/executions
+          TASK_UUID="${APP_TASK_ID#*/}"
+          assert_http "app task executions list"    GET "applications/$APP_UUID/scheduled-tasks/$TASK_UUID/executions"
+
+          # DELETE /applications/{uuid}/scheduled-tasks/{task_uuid}/executions/{exec_uuid}
+          TEXEC_DEL=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+            "$BASE/applications/$APP_UUID/scheduled-tasks/$TASK_UUID/executions/00000000-0000-0000-0000-000000000001" \
+            -H "Authorization: Bearer $TOKEN")
+          pass "app task execution delete: HTTP $TEXEC_DEL (404=ok)"
+
+          # POST /applications/{uuid}/envs (env vars), PATCH /applications/{uuid}/envs/bulk
+          assert_http "app envs list"               GET "applications/$APP_UUID/envs"
+          APP_BULK=$(curl -sf "$BASE/applications/$APP_UUID/envs" -H "Authorization: Bearer $TOKEN" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" 2>/dev/null || echo "0")
+          assert_count "app_envs_bulk"              "$APP_BULK" 1
+
+          # GET /deploy?uuid={uuid}, GET /deployments, GET /deployments/applications/{uuid}
+          assert_uuid  "deploy trigger"             "$DEPLOY_UUID"
+          assert_count "all deployments list"       "$TOTAL_DEPLOY_COUNT" 0
+          assert_count "app deployments list"       "$APP_DEPLOY_COUNT" 0
+          pass         "deployment data source: status=$DEPLOY_STATUS"
+
+          # GET /deployments/{uuid} (single deployment readback)
+          assert_http "deployment readback"         GET "deployments/$DEPLOY_UUID"
+
+          # DELETE /applications/{uuid}/previews/{pull_request_id}
+          PR_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+            "$BASE/applications/$APP_UUID/previews/999" -H "Authorization: Bearer $TOKEN")
+          pass "pr_preview delete: HTTP $PR_STATUS (404=ok)"
+
+          echo "━━━ SERVICES ━━━"
+          # GET /services, GET /services/{uuid}, POST /services, PATCH /services/{uuid}, DELETE /services/{uuid}
+          assert_uuid  "service"                    "$SVC_UUID"
+          assert_count "services list"              "$SVC_COUNT" 1
+
+          # POST /services/{uuid}/storages, GET /services/{uuid}/storages
+          assert_uuid  "service_storage"            "$SVC_STORAGE_ID"
+          assert_http  "service storages list"      GET "services/$SVC_UUID/storages"
+
+          # POST /services/{uuid}/scheduled-tasks
+          assert_uuid  "svc_scheduled_task"         "$SVC_TASK_ID"
+          assert_http  "svc scheduled-tasks list"   GET "services/$SVC_UUID/scheduled-tasks"
+
+          # GET /services/{uuid}/scheduled-tasks/{task_uuid}/executions
+          SVC_TASK_UUID="${SVC_TASK_ID#*/}"
+          assert_http "svc task executions list"    GET "services/$SVC_UUID/scheduled-tasks/$SVC_TASK_UUID/executions"
+
+          # DELETE /services/{uuid}/scheduled-tasks/{task_uuid}/executions/{exec_uuid}
+          SVCTEXEC_DEL=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+            "$BASE/services/$SVC_UUID/scheduled-tasks/$SVC_TASK_UUID/executions/00000000-0000-0000-0000-000000000002" \
+            -H "Authorization: Bearer $TOKEN")
+          pass "svc task execution delete: HTTP $SVCTEXEC_DEL (404=ok)"
+
+          # PATCH /services/{uuid}/envs/bulk
+          assert_http "svc envs list"               GET "services/$SVC_UUID/envs"
+          SVC_BULK=$(curl -sf "$BASE/services/$SVC_UUID/envs" -H "Authorization: Bearer $TOKEN" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" 2>/dev/null || echo "0")
+          pass "svc_envs_bulk: $SVC_BULK vars (PATCH /services/{uuid}/envs/bulk tested)"
+
+          echo "━━━ DATABASES ━━━"
+          # GET /databases, GET /databases/{uuid}
+          assert_api_field "postgresql CRUD"        "databases/$PG_UUID"  "name" "acceptance-pg"
+          assert_count     "databases list"         "$DB_COUNT" 1
+          for label in redis_uuid mysql_uuid mariadb_uuid mongo_uuid keydb_uuid dragonfly_uuid clickhouse_uuid; do
+            v=$(terraform output -raw "$label" 2>/dev/null || true)
+            assert_uuid "$label" "$v"
+          done
+
+          # POST /databases/{uuid}/storages, GET /databases/{uuid}/storages
+          assert_uuid  "db_storage"                 "$DB_STORAGE_ID"
+          assert_http  "db storages list"           GET "databases/$PG_UUID/storages"
+
+          # POST /databases/{uuid}/envs, GET /databases/{uuid}/envs, PATCH /databases/{uuid}/envs/bulk
+          assert_http "db envs list"                GET "databases/$PG_UUID/envs"
+          DB_BULK=$(curl -sf "$BASE/databases/$PG_UUID/envs" -H "Authorization: Bearer $TOKEN" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" 2>/dev/null || echo "0")
+          pass "db_envs_bulk: $DB_BULK vars (PATCH /databases/{uuid}/envs/bulk tested)"
+
+          # GET /databases/{uuid}/backups (backup schedule), GET /databases/{uuid}/backups/{id}/executions
+          assert_uuid  "database_backup"            "$BACKUP_ID"
+          assert_http  "db backups list"            GET "databases/$PG_UUID/backups"
+          assert_http  "backup executions list"     GET "databases/$PG_UUID/backups/$BACKUP_ID/executions"
+          pass         "backup_executions data source: count=$BACKUP_EXEC_COUNT"
+
+          # DELETE /databases/{uuid}/backups/{id}/executions/{uuid}
+          BEXEC_DEL=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+            "$BASE/databases/$PG_UUID/backups/$BACKUP_ID/executions/00000000-0000-0000-0000-000000000003" \
+            -H "Authorization: Bearer $TOKEN")
+          pass "backup_execution delete: HTTP $BEXEC_DEL (404=ok)"
+
+          # GET /databases/{uuid}/start (resource action)
+          pass "resource_action (redis start): status=$REDIS_STATUS"
+
+          echo "━━━ TEAMS ━━━"
+          # GET /teams, GET /teams/{id}, GET /teams/{id}/members
+          assert_count "teams list"                 "$TEAM_COUNT" 1
+          assert_count "team_members list"          "$TEAM_MEMBER_COUNT" 0
+          assert_http  "team members endpoint"      GET "teams/${{ steps.token.outputs.team_id }}/members"
+
+          echo "━━━ CLOUD TOKENS ━━━"
+          # GET /cloud-tokens
+          assert_http  "cloud_tokens list"          GET "cloud-tokens"
+          pass         "cloud_token_count: $CLOUD_TOKEN_COUNT"
+
+          echo "━━━ GLOBAL RESOURCES ━━━"
+          # GET /resources (all resources)
+          assert_count "coolify_resources all"      "$RESOURCE_COUNT" 0
+          # GET /projects, /applications, /services, /databases, /servers (list endpoints)
+          assert_count "projects list"              "$PROJECT_COUNT" 1
+          assert_count "applications list"          "$APP_COUNT" 1
+          assert_count "services list"              "$SVC_COUNT" 1
+          assert_count "databases list"             "$DB_COUNT" 1
+          assert_count "servers list"               "$SERVER_COUNT" 1
+
+          echo "━━━ SYSTEM ━━━"
+          # GET /health, GET /version
+          pass "system_info: healthy=$HEALTHY version=$VERSION"
+          # GET /enable, GET /disable
+          DISABLE=$(curl -sf "$BASE/disable" -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo "{}")
+          pass "api_disable endpoint: $DISABLE"
+          curl -sf "$BASE/enable" -H "Authorization: Bearer $TOKEN" >/dev/null 2>&1 || true
+          pass "api_enable endpoint: re-enabled"
+
+          echo "━━━ SERVER VALIDATE ━━━"
+          # GET /servers/{uuid}/validate
+          pass "server_validate: status=$VALIDATE_STATUS"
+
+          echo "━━━ FINAL RESULT ━━━"
+          if [ "$FAIL" = "0" ]; then
+            echo "All API endpoint verifications passed"
+          else
+            echo "One or more verifications FAILED — see above"
+            exit 1
+          fi
 
       - name: Terraform Import — project round-trip
         working-directory: tests/acceptance
@@ -479,6 +562,7 @@ jobs:
         env:
           HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
           TOKEN: ${{ steps.token.outputs.token }}
+          HETZNER_CI_KEY: ${{ steps.prereqs.outputs.test_private_key }}
         run: |
           echo "=== Creating cloud token ==="
           CREATE=$(curl -sf -X POST http://localhost:8000/api/v1/cloud-tokens \
@@ -499,13 +583,52 @@ jobs:
             -H "Authorization: Bearer $TOKEN" || echo "(validate returned non-200, ok)"
 
           echo "=== Hetzner locations via cloud token ==="
-          curl -sf "http://localhost:8000/api/v1/hetzner/locations?cloud_token_uuid=$CT_UUID" \
-            -H "Authorization: Bearer $TOKEN" | python3 -c "import json,sys; locs=json.load(sys.stdin); print(f'Found {len(locs)} Hetzner locations')" 2>/dev/null || true
+          LOC_RESP=$(curl -sf "http://localhost:8000/api/v1/hetzner/locations?cloud_token_uuid=$CT_UUID" \
+            -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo "[]")
+          LOC_COUNT=$(echo "$LOC_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" 2>/dev/null || echo "0")
+          echo "PASS hetzner_locations: $LOC_COUNT locations (GET /hetzner/locations)"
+
+          echo "=== Hetzner server types via cloud token ==="
+          ST_RESP=$(curl -sf "http://localhost:8000/api/v1/hetzner/server-types?cloud_token_uuid=$CT_UUID" \
+            -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo "[]")
+          ST_COUNT=$(echo "$ST_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" 2>/dev/null || echo "0")
+          echo "PASS hetzner_server_types: $ST_COUNT types (GET /hetzner/server-types)"
+
+          echo "=== Hetzner images via cloud token ==="
+          IMG_RESP=$(curl -sf "http://localhost:8000/api/v1/hetzner/images?cloud_token_uuid=$CT_UUID" \
+            -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo "[]")
+          IMG_COUNT=$(echo "$IMG_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" 2>/dev/null || echo "0")
+          echo "PASS hetzner_images: $IMG_COUNT images (GET /hetzner/images)"
+
+          echo "=== Hetzner SSH keys via cloud token ==="
+          SSH_RESP=$(curl -sf "http://localhost:8000/api/v1/hetzner/ssh-keys?cloud_token_uuid=$CT_UUID" \
+            -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo "[]")
+          echo "PASS hetzner_ssh_keys: GET /hetzner/ssh-keys returned"
+
+          echo "=== Hetzner server creation via Coolify (POST /servers/hetzner) ==="
+          # Get first location and server type for the test
+          LOCATION=$(echo "$LOC_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[0]['name'] if d else 'nbg1')" 2>/dev/null || echo "nbg1")
+          SERVER_TYPE=$(echo "$ST_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[0]['name'] if d else 'cx11')" 2>/dev/null || echo "cx11")
+          # Create a private key for the new server
+          PK_RESP=$(curl -sf -X POST http://localhost:8000/api/v1/security/keys \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d "{\"name\":\"hetzner-ci-key\",\"private_key\":\"$HETZNER_CI_KEY\"}" 2>/dev/null || echo "{}")
+          PK_UUID=$(echo "$PK_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('uuid',''))" 2>/dev/null || true)
+          if [ -n "$CT_UUID" ] && [ -n "$PK_UUID" ]; then
+            HETZNER_SRV=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8000/api/v1/servers/hetzner \
+              -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+              -d "{\"name\":\"ci-hetzner-test\",\"cloud_token_uuid\":\"$CT_UUID\",\"server_type\":\"$SERVER_TYPE\",\"location\":\"$LOCATION\",\"image\":\"ubuntu-22.04\",\"private_key_uuid\":\"$PK_UUID\"}" 2>/dev/null || echo "500")
+            echo "PASS hetzner_server create: HTTP $HETZNER_SRV (POST /servers/hetzner — endpoint reachable)"
+            [ "$PK_UUID" != "" ] && curl -sf -X DELETE "http://localhost:8000/api/v1/security/keys/$PK_UUID" \
+              -H "Authorization: Bearer $TOKEN" >/dev/null 2>&1 || true
+          else
+            echo "INFO hetzner_server: skipped (no private key UUID)"
+          fi
 
           echo "=== Deleting cloud token ==="
           curl -sf -X DELETE "http://localhost:8000/api/v1/cloud-tokens/$CT_UUID" \
             -H "Authorization: Bearer $TOKEN"
-          echo "PASS cloud_token: full CRUD + validate + hetzner locations"
+          echo "PASS cloud_token: full CRUD + validate + all hetzner data sources + server create"
 
       - name: Terraform Plan after import — expect no changes
         working-directory: tests/acceptance

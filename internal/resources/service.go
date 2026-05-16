@@ -17,7 +17,7 @@ func NewServiceResource() resource.Resource {
 		stringField("name", false, true, false),
 		stringField("description", false, true, false),
 		boolField("instant_deploy", false, true, false),
-		stringField("docker_compose_raw", false, true, false),
+		{Name: "docker_compose_raw", Kind: kindString, Optional: true, Send: true, SkipAPIRead: true, Description: "Raw Docker Compose YAML. Coolify normalises the returned YAML, so this field is write-only in state to avoid perpetual drift."},
 		// fqdn cannot be set on creation — Coolify only accepts it via PATCH.
 		{Name: "fqdn", Kind: kindString, Optional: true, Send: true, SkipCreate: true, Description: "Public FQDN for the service (e.g. https://secrets.arcusis.com). Set after creation via update."},
 	})

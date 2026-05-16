@@ -77,9 +77,9 @@ func (r *serviceEnvironmentVariableResource) Create(ctx context.Context, req res
 				resp.Diagnostics.AddError("Unable to upsert Coolify service environment variable", patchErr.Error())
 				return
 			}
-			applyServiceEnvData(&plan, existing)
+			// Use existing ID but keep plan's sensitive value — the API masks it on read.
 			if id := firstStringFromMap(existing, "uuid", "id"); id != "" {
-				created = existing
+				created = map[string]any{"uuid": id}
 			}
 		} else {
 			resp.Diagnostics.AddError("Unable to create Coolify service environment variable", err.Error())
@@ -223,7 +223,11 @@ func applyServiceEnvData(m *serviceEnvVarModel, data map[string]any) {
 		m.Key = types.StringValue(stringFromAny(v))
 	}
 	if v, ok := data["value"]; ok {
-		m.Value = types.StringValue(stringFromAny(v))
+		s := stringFromAny(v)
+		if s != "" {
+			m.Value = types.StringValue(s)
+		}
+		// else: keep plan value — API masks sensitive values after they're set
 	}
 	if v, ok := data["is_literal"]; ok {
 		m.IsLiteral = types.BoolValue(boolFromAny(v))
@@ -232,6 +236,11 @@ func applyServiceEnvData(m *serviceEnvVarModel, data map[string]any) {
 		m.IsMultiline = types.BoolValue(boolFromAny(v))
 	}
 	if v, ok := data["is_shown_once"]; ok {
+		// is_shown_once=true means the value was hidden after write;
+		// the API returns false afterwards. Keep true if we set it.
+		if !m.IsShownOnce.IsNull() && m.IsShownOnce.ValueBool() {
+			return
+		}
 		m.IsShownOnce = types.BoolValue(boolFromAny(v))
 	}
 }

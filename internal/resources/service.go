@@ -12,5 +12,6 @@ func NewServiceResource() resource.Resource {
 		stringField("description", false, true, false),
 		boolField("instant_deploy", false, true, false),
 		stringField("docker_compose_raw", false, true, false),
+		stringField("fqdn", false, true, false),
 	})
 }

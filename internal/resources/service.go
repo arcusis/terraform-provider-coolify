@@ -18,8 +18,9 @@ func NewServiceResource() resource.Resource {
 		stringField("description", false, true, false),
 		boolField("instant_deploy", false, true, false),
 		{Name: "docker_compose_raw", Kind: kindString, Optional: true, Send: true, SkipAPIRead: true, Description: "Raw Docker Compose YAML. Coolify normalises the returned YAML, so this field is write-only in state to avoid perpetual drift."},
-		// fqdn cannot be set on creation — Coolify only accepts it via PATCH.
-		{Name: "fqdn", Kind: kindString, Optional: true, Send: true, SkipCreate: true, Description: "Public FQDN for the service (e.g. https://secrets.arcusis.com). Set after creation via update."},
+		// fqdn is not accepted by the Coolify API on either POST or PATCH for compose
+		// services — routing is handled via Traefik labels in docker_compose_raw instead.
+		{Name: "fqdn", Kind: kindString, Optional: true, Send: true, SkipCreate: true, SkipUpdate: true, Description: "Public FQDN (informational only for compose services — use Traefik labels instead)."},
 	})
 	gr := r.(*genericResource)
 	encodeCompose := func(body map[string]any) map[string]any {

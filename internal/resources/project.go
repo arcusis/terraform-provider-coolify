@@ -223,6 +223,10 @@ func (r *genericResource) Update(ctx context.Context, req resource.UpdateRequest
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)
 	r.writeAPIDataToState(ctx, &resp.State, apiData, &resp.Diagnostics)
+	// Preserve SkipAPIRead fields from the plan — the API never returns them so
+	// writeAPIDataToState skips them, which would leave them null and cause an
+	// "inconsistent result after apply" error.
+	r.copyPlanAttrsToState(ctx, req.Plan, &resp.State, &resp.Diagnostics)
 }
 
 func (r *genericResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -335,6 +339,34 @@ func (r *genericResource) writeAttrsToState(ctx context.Context, state stateTarg
 			}
 		case kindInt64:
 			state.SetAttribute(ctx, path.Root(f.Name), types.Int64Value(int64FromAny(v)))
+		}
+	}
+}
+
+func (r *genericResource) copyPlanAttrsToState(ctx context.Context, plan planOrState, state stateTarget, diags *diag.Diagnostics) {
+	for _, f := range r.fields {
+		if !f.SkipAPIRead {
+			continue
+		}
+		switch f.Kind {
+		case kindString:
+			var v types.String
+			diags.Append(plan.GetAttribute(ctx, path.Root(f.Name), &v)...)
+			if !v.IsNull() && !v.IsUnknown() {
+				diags.Append(state.SetAttribute(ctx, path.Root(f.Name), v)...)
+			}
+		case kindBool:
+			var v types.Bool
+			diags.Append(plan.GetAttribute(ctx, path.Root(f.Name), &v)...)
+			if !v.IsNull() && !v.IsUnknown() {
+				diags.Append(state.SetAttribute(ctx, path.Root(f.Name), v)...)
+			}
+		case kindInt64:
+			var v types.Int64
+			diags.Append(plan.GetAttribute(ctx, path.Root(f.Name), &v)...)
+			if !v.IsNull() && !v.IsUnknown() {
+				diags.Append(state.SetAttribute(ctx, path.Root(f.Name), v)...)
+			}
 		}
 	}
 }

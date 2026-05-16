@@ -13,9 +13,11 @@ import (
 )
 
 type Client struct {
-	BaseURL    string
-	Token      string
-	HTTPClient *http.Client
+	BaseURL             string
+	Token               string
+	CFAccessClientID    string
+	CFAccessClientSecret string
+	HTTPClient          *http.Client
 }
 
 type HTTPError struct {
@@ -32,10 +34,12 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("%s %s failed with HTTP %d: %s", e.Method, e.Path, e.StatusCode, e.Body)
 }
 
-func NewClient(baseURL, token string) *Client {
+func NewClient(baseURL, token, cfAccessClientID, cfAccessClientSecret string) *Client {
 	return &Client{
-		BaseURL: strings.TrimRight(baseURL, "/"),
-		Token:   token,
+		BaseURL:              strings.TrimRight(baseURL, "/"),
+		Token:                token,
+		CFAccessClientID:     cfAccessClientID,
+		CFAccessClientSecret: cfAccessClientSecret,
 		HTTPClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -94,6 +98,12 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 		}
 		if c.Token != "" {
 			req.Header.Set("Authorization", "Bearer "+c.Token)
+		}
+		if c.CFAccessClientID != "" {
+			req.Header.Set("CF-Access-Client-Id", c.CFAccessClientID)
+		}
+		if c.CFAccessClientSecret != "" {
+			req.Header.Set("CF-Access-Client-Secret", c.CFAccessClientSecret)
 		}
 
 		res, err := c.HTTPClient.Do(req)

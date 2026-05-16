@@ -23,8 +23,10 @@ type CoolifyProvider struct {
 }
 
 type configModel struct {
-	Endpoint types.String `tfsdk:"endpoint"`
-	Token    types.String `tfsdk:"token"`
+	Endpoint             types.String `tfsdk:"endpoint"`
+	Token                types.String `tfsdk:"token"`
+	CFAccessClientID     types.String `tfsdk:"cf_access_client_id"`
+	CFAccessClientSecret types.String `tfsdk:"cf_access_client_secret"`
 }
 
 func New(version string) func() provider.Provider {
@@ -50,6 +52,16 @@ func (p *CoolifyProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 				Sensitive:   true,
 				Description: "Coolify API bearer token. Can also be set with COOLIFY_TOKEN.",
 			},
+			"cf_access_client_id": schema.StringAttribute{
+				Optional:    true,
+				Sensitive:   true,
+				Description: "Cloudflare Access service token client ID. Required when the Coolify endpoint is protected by Cloudflare Access. Can also be set with COOLIFY_CF_ACCESS_CLIENT_ID.",
+			},
+			"cf_access_client_secret": schema.StringAttribute{
+				Optional:    true,
+				Sensitive:   true,
+				Description: "Cloudflare Access service token client secret. Required when the Coolify endpoint is protected by Cloudflare Access. Can also be set with COOLIFY_CF_ACCESS_CLIENT_SECRET.",
+			},
 		},
 	}
 }
@@ -63,12 +75,20 @@ func (p *CoolifyProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 	endpoint := strings.TrimSpace(os.Getenv("COOLIFY_ENDPOINT"))
 	token := strings.TrimSpace(os.Getenv("COOLIFY_TOKEN"))
+	cfAccessClientID := strings.TrimSpace(os.Getenv("COOLIFY_CF_ACCESS_CLIENT_ID"))
+	cfAccessClientSecret := strings.TrimSpace(os.Getenv("COOLIFY_CF_ACCESS_CLIENT_SECRET"))
 
 	if !config.Endpoint.IsNull() && !config.Endpoint.IsUnknown() {
 		endpoint = strings.TrimSpace(config.Endpoint.ValueString())
 	}
 	if !config.Token.IsNull() && !config.Token.IsUnknown() {
 		token = strings.TrimSpace(config.Token.ValueString())
+	}
+	if !config.CFAccessClientID.IsNull() && !config.CFAccessClientID.IsUnknown() {
+		cfAccessClientID = strings.TrimSpace(config.CFAccessClientID.ValueString())
+	}
+	if !config.CFAccessClientSecret.IsNull() && !config.CFAccessClientSecret.IsUnknown() {
+		cfAccessClientSecret = strings.TrimSpace(config.CFAccessClientSecret.ValueString())
 	}
 
 	if endpoint == "" {
@@ -89,7 +109,7 @@ func (p *CoolifyProvider) Configure(ctx context.Context, req provider.ConfigureR
 		return
 	}
 
-	client := coolify.NewClient(endpoint, token)
+	client := coolify.NewClient(endpoint, token, cfAccessClientID, cfAccessClientSecret)
 	tflog.Debug(ctx, "configured Coolify API client", map[string]any{"endpoint": endpoint})
 	resp.DataSourceData = client
 	resp.ResourceData = client

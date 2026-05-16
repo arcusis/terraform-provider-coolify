@@ -40,6 +40,7 @@ type resourceField struct {
 	Sensitive   bool
 	Send        bool
 	SkipAPIRead bool // don't overwrite from API response (write-only fields the API never returns)
+	SkipCreate  bool // omit from POST body; only sent on PATCH updates
 	ForceNew    bool // changing this field requires destroy-and-recreate
 	Description string
 }
@@ -99,6 +100,7 @@ type genericResource struct {
 	updatePath          func(id string) string
 	deletePath          func(id string) string
 	fields              []resourceField
+	createBodyTransform func(body map[string]any) map[string]any
 	updateBodyTransform func(id string, body map[string]any) map[string]any
 }
 
@@ -146,7 +148,10 @@ func (r *genericResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	body := r.bodyFromVals(vals)
+	body := r.bodyFromValsCreate(vals)
+	if r.createBodyTransform != nil {
+		body = r.createBodyTransform(body)
+	}
 	var created map[string]any
 	if err := r.client.Post(ctx, r.createPath(r.stringVals(vals)), body, &created); err != nil {
 		resp.Diagnostics.AddError("Unable to create Coolify "+r.displayName, err.Error())
@@ -271,9 +276,20 @@ func (r *genericResource) readAttrsFromPlan(ctx context.Context, plan planOrStat
 }
 
 func (r *genericResource) bodyFromVals(vals map[string]any) map[string]any {
+	return r.bodyFromValsFiltered(vals, false)
+}
+
+func (r *genericResource) bodyFromValsCreate(vals map[string]any) map[string]any {
+	return r.bodyFromValsFiltered(vals, true)
+}
+
+func (r *genericResource) bodyFromValsFiltered(vals map[string]any, isCreate bool) map[string]any {
 	body := make(map[string]any)
 	for _, f := range r.fields {
 		if !f.Send {
+			continue
+		}
+		if isCreate && f.SkipCreate {
 			continue
 		}
 		if v, ok := vals[f.Name]; ok {

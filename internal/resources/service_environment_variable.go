@@ -65,8 +65,26 @@ func (r *serviceEnvironmentVariableResource) Create(ctx context.Context, req res
 	body := serviceEnvBody(plan)
 	var created map[string]any
 	if err := r.client.Post(ctx, serviceEnvsPath(plan.ServiceUUID.ValueString()), body, &created); err != nil {
-		resp.Diagnostics.AddError("Unable to create Coolify service environment variable", err.Error())
-		return
+		// 409 means Coolify pre-populated this env var from the service template.
+		// Fall back to upsert: find the existing one and PATCH it.
+		if httpErr, ok := err.(*coolify.HTTPError); ok && httpErr.StatusCode == http.StatusConflict {
+			existing, findErr := r.findEnv(ctx, plan.ServiceUUID.ValueString(), "", plan.Key.ValueString())
+			if findErr != nil || len(existing) == 0 {
+				resp.Diagnostics.AddError("Unable to create Coolify service environment variable", err.Error())
+				return
+			}
+			if patchErr := r.client.Patch(ctx, serviceEnvsPath(plan.ServiceUUID.ValueString()), serviceEnvBody(plan), nil); patchErr != nil {
+				resp.Diagnostics.AddError("Unable to upsert Coolify service environment variable", patchErr.Error())
+				return
+			}
+			applyServiceEnvData(&plan, existing)
+			if id := firstStringFromMap(existing, "uuid", "id"); id != "" {
+				created = existing
+			}
+		} else {
+			resp.Diagnostics.AddError("Unable to create Coolify service environment variable", err.Error())
+			return
+		}
 	}
 
 	applyServiceEnvData(&plan, created)

@@ -10,10 +10,10 @@ func NewServiceResource() resource.Resource {
 	r := newGenericResource("service", "service", "/api/v1/services", "/api/v1/services/%s", []resourceField{
 		// type and docker_compose_raw are mutually exclusive on create — the
 		// createBodyTransform below drops type when docker_compose_raw is set.
-		{Name: "type", Kind: kindString, Optional: true, Send: true, ForceNew: true, SkipAPIRead: true, Description: "One-click service type (e.g. infisical, ghost). Omit when using docker_compose_raw."},
-		{Name: "project_uuid", Kind: kindString, Required: true, Send: true, ForceNew: true, SkipAPIRead: true, Description: "UUID of the project."},
-		{Name: "server_uuid", Kind: kindString, Required: true, Send: true, ForceNew: true, SkipAPIRead: true, Description: "UUID of the server."},
-		{Name: "environment_name", Kind: kindString, Required: true, Send: true, ForceNew: true, SkipAPIRead: true, Description: "Name of the environment."},
+		{Name: "type", Kind: kindString, Optional: true, Send: true, ForceNew: true, SkipAPIRead: true, SkipUpdate: true, Description: "One-click service type (e.g. infisical, ghost). Omit when using docker_compose_raw."},
+		{Name: "project_uuid", Kind: kindString, Required: true, Send: true, ForceNew: true, SkipAPIRead: true, SkipUpdate: true, Description: "UUID of the project."},
+		{Name: "server_uuid", Kind: kindString, Required: true, Send: true, ForceNew: true, SkipAPIRead: true, SkipUpdate: true, Description: "UUID of the server."},
+		{Name: "environment_name", Kind: kindString, Required: true, Send: true, ForceNew: true, SkipAPIRead: true, SkipUpdate: true, Description: "Name of the environment."},
 		stringField("name", false, true, false),
 		stringField("description", false, true, false),
 		boolField("instant_deploy", false, true, false),

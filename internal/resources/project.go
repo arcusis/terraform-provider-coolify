@@ -41,6 +41,7 @@ type resourceField struct {
 	Send        bool
 	SkipAPIRead bool // don't overwrite from API response (write-only fields the API never returns)
 	SkipCreate  bool // omit from POST body; only sent on PATCH updates
+	SkipUpdate  bool // omit from PATCH body; only sent on POST create
 	ForceNew    bool // changing this field requires destroy-and-recreate
 	Description string
 }
@@ -290,6 +291,9 @@ func (r *genericResource) bodyFromValsFiltered(vals map[string]any, isCreate boo
 			continue
 		}
 		if isCreate && f.SkipCreate {
+			continue
+		}
+		if !isCreate && f.SkipUpdate {
 			continue
 		}
 		if v, ok := vals[f.Name]; ok {
